@@ -305,15 +305,11 @@ const Home = () => {
         }
     }, [addLog]);
 
-    // API 호출 없는 녹음 시작 함수 (오디오만)
+    // API 호출 없는 녹음 시작 함수 (오디오만) - 권한은 이미 확인됨
     const startRecordingAudioOnly = useCallback(async () => {
-        console.log('🎤 오디오 녹음만 시작...');
+        console.log('🎤 오디오 녹음만 시작... (권한 이미 확인됨)');
 
-        const hasPermission = await checkPermissions();
-        if (!hasPermission) {
-            addLog('마이크 권한이 거부되어 녹음을 시작할 수 없습니다', 'error');
-            return false;
-        }
+        // 권한은 handlePress에서 이미 확인했으므로 바로 녹음 시작
 
         try {
             await Audio.setAudioModeAsync({
@@ -569,7 +565,7 @@ const Home = () => {
         });
     }, [isConnected]);
 
-    // 수정된 handlePress 함수 - 순서 변경
+    // 권한 우선 처리 handlePress 함수
     const handlePress = useCallback(async () => {
         const newIsOn = !isOn;
         const toValue = newIsOn ? 1 : 0;
@@ -578,17 +574,53 @@ const Home = () => {
         createRipple();
 
         if (newIsOn) {
-            console.log('🔄 1단계: 녹음 시작 API 호출');
-            // 1. 먼저 API 호출 (WebSocket 연결 전에)
-            const apiSuccess = await startRecordingAPI();
-            if (!apiSuccess) {
-                Alert.alert('오류', '녹음 시작 API 호출에 실패했습니다');
-                setIsOn(false); // 상태 되돌리기
+            console.log('🔄 1단계: 마이크 권한 확인 (최우선)');
+            // 1. 가장 먼저 권한 확인 - 버튼 누르자마자 권한 체크
+            const hasPermission = await checkPermissions();
+            if (!hasPermission) {
+                addLog('마이크 권한이 거부되어 녹음을 시작할 수 없습니다', 'error');
+                
+                // Alert 표시 강화 - 사용자에게 명확한 안내
+                Alert.alert(
+                    '🎤 마이크 권한 필요', 
+                    '실시간 욕설 감지를 위해서는 마이크 권한이 반드시 필요합니다.\n\n설정 방법:\n• 설정 > 개인정보 보호 및 보안 > 마이크\n• 해당 앱의 마이크 권한을 활성화',
+                    [
+                        { 
+                            text: '나중에 하기', 
+                            style: 'cancel', 
+                            onPress: () => {
+                                addLog('사용자가 권한 설정을 나중에 하기로 선택', 'info');
+                                setIsOn(false);
+                            } 
+                        },
+                        { 
+                            text: '설정 열기', 
+                            style: 'default',
+                            onPress: () => {
+                                addLog('설정 앱으로 이동', 'info');
+                                Linking.openSettings();
+                                setIsOn(false);
+                            }
+                        }
+                    ]
+                );
+                
+                // 권한이 없으면 여기서 종료 - API 호출 없음
+                setIsOn(false);
                 return;
             }
 
-            console.log('🔄 2단계: WebSocket 연결');
-            // 2. API 호출 후 WebSocket 연결
+            console.log('🔄 2단계: 권한 승인됨 - API 호출 시작');
+            // 2. 권한이 있을 때만 API 호출
+            const apiSuccess = await startRecordingAPI();
+            if (!apiSuccess) {
+                Alert.alert('오류', '녹음 시작 API 호출에 실패했습니다');
+                setIsOn(false);
+                return;
+            }
+
+            console.log('🔄 3단계: WebSocket 연결');
+            // 3. API 호출 후 WebSocket 연결
             if (!isConnected) {
                 connectWebSocket();
                 addLog('WebSocket 연결 중...');
@@ -603,32 +635,9 @@ const Home = () => {
                 }
             }
 
-            console.log('🔄 3단계: 오디오 녹음 시작');
-            // 3. 마지막으로 오디오 녹음 시작 (API 호출 제외)
+            console.log('🔄 4단계: 오디오 녹음 시작 (권한 이미 확인됨)');
+            // 4. 마지막으로 오디오 녹음 시작 (권한은 이미 확인됨)
             if (!isRecording) {
-                // 먼저 권한 확인
-                const hasPermission = await checkPermissions();
-                if (!hasPermission) {
-                    addLog('마이크 권한이 없어서 녹음을 시작할 수 없습니다', 'error');
-                    Alert.alert(
-                        '권한 필요', 
-                        '음성 감지를 위해 마이크 권한을 허용해주세요.\n설정 > 개인정보 보호 및 보안 > 마이크에서 권한을 설정할 수 있습니다.',
-                        [
-                            { text: '나중에', style: 'cancel', onPress: () => setIsOn(false) },
-                            { 
-                                text: '설정으로', 
-                                onPress: () => {
-                                    Linking.openSettings();
-                                    setIsOn(false);
-                                }
-                            }
-                        ]
-                    );
-                    // 권한이 없을 때는 API 종료 호출하지 않음 (아직 실제 녹음 시작 안했으므로)
-                    setIsOn(false);
-                    return;
-                }
-
                 const recordingSuccess = await startRecordingAudioOnly();
                 if (!recordingSuccess) {
                     // 권한은 있지만 녹음 실패시에만 API 종료
