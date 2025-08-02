@@ -133,6 +133,12 @@ export default function TabLayout() {
           tabBarLabel: "그룹",
         }}
       />
+        <Tabs.Screen
+            name="create"
+            options={{
+                href: null
+            }}
+        />
     </Tabs>
   );
 }
