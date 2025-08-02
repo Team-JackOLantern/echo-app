@@ -35,6 +35,7 @@ const Home = () => {
     const [detectionStatus, setDetectionStatus] = useState<'normal' | 'detected' | 'info'>('info');
     const [ripples, setRipples] = useState<Ripple[]>([]);
     const [, setLogs] = useState<string[]>([]);
+    const [apiDisabled, setApiDisabled] = useState(false); // API 호출 비활성화 플래그 (필요시 true로 변경)
     const insets = useSafeAreaInsets();
 
     const buttonScale = useRef(new Animated.Value(1)).current;
@@ -53,6 +54,12 @@ const Home = () => {
     }, []);
 
     const startRecordingAPI = useCallback(async () => {
+        if (apiDisabled) {
+            addLog('🚫 API 호출이 비활성화되었습니다', 'warning');
+            console.log('🚫 API 호출 비활성화됨 - startRecordingAPI 생략');
+            return true; // 성공으로 처리
+        }
+        
         if (!SERVER_URL) {
             addLog('서버 URL이 설정되지 않았습니다', 'error');
             return false;
@@ -77,9 +84,15 @@ const Home = () => {
             addLog('녹음 시작 API 오류: ' + (error as Error).message, 'error');
             return false;
         }
-    }, [addLog]);
+    }, [addLog, apiDisabled]);
 
     const stopRecordingAPI = useCallback(async () => {
+        if (apiDisabled) {
+            addLog('🚫 API 호출이 비활성화되었습니다', 'warning');
+            console.log('🚫 API 호출 비활성화됨 - stopRecordingAPI 생략');
+            return true; // 성공으로 처리
+        }
+        
         if (!SERVER_URL) {
             addLog('서버 URL이 설정되지 않았습니다', 'error');
             return false;
@@ -103,6 +116,44 @@ const Home = () => {
         } catch (error) {
             addLog('녹음 중지 API 오류: ' + (error as Error).message, 'error');
             return false;
+        }
+    }, [addLog, apiDisabled]);
+
+    // API 호출 없는 리소스 정리 함수 (무한루프 방지)
+    const cleanupResourcesOnly = useCallback(() => {
+        console.log('🧹 API 호출 없이 리소스만 정리');
+        
+        try {
+            // 1. 실시간 스트림 정리 (Web Audio API)
+            if (audioTransmissionRef.current && typeof audioTransmissionRef.current === 'object') {
+                const { audioContext, processor, stream } = audioTransmissionRef.current as any;
+                
+                if (processor) processor.disconnect();
+                if (audioContext) audioContext.close();
+                if (stream) stream.getTracks().forEach((track: any) => track.stop());
+                
+                audioTransmissionRef.current = null;
+                console.log('✅ Web Audio API 리소스 정리');
+            }
+            
+            // 2. 기존 interval 정리
+            else if (typeof audioTransmissionRef.current === 'number') {
+                clearInterval(audioTransmissionRef.current);
+                audioTransmissionRef.current = null;
+                console.log('✅ 오디오 전송 인터벌 정리');
+            }
+            
+            // 3. expo-av 녹음 정리
+            if (recordingRef.current) {
+                recordingRef.current.stopAndUnloadAsync().catch(() => {});
+                recordingRef.current = null;
+                console.log('✅ 녹음 리소스 정리');
+            }
+            
+            setIsRecording(false);
+            addLog('🧹 리소스 정리 완료 (API 호출 없음)', 'info');
+        } catch (error) {
+            console.log('❌ 리소스 정리 오류:', error);
         }
     }, [addLog]);
 
@@ -222,23 +273,8 @@ const Home = () => {
                     console.log('🛑 WebSocket 연결 끊김으로 녹음 정리 시작');
                     addLog('WebSocket 연결 끊김으로 녹음 상태 정리', 'warning');
                     
-                    // 오디오 관련 리소스만 정리 (API 호출 없이)
-                    try {
-                        if (audioTransmissionRef.current) {
-                            clearInterval(audioTransmissionRef.current);
-                            audioTransmissionRef.current = null;
-                        }
-                        
-                        if (recordingRef.current) {
-                            recordingRef.current.stopAndUnloadAsync().catch(() => {});
-                            recordingRef.current = null;
-                        }
-                        
-                        setIsRecording(false);
-                        addLog('녹음 상태 정리 완료', 'info');
-                    } catch (error) {
-                        console.log('녹음 정리 중 오류:', error);
-                    }
+                    // 무한루프 방지: API 호출 없이 리소스만 정리
+                    cleanupResourcesOnly();
                 }
 
                 // 자동 재연결 시도 (1000번 코드가 아닌 경우)
@@ -265,15 +301,15 @@ const Home = () => {
             console.log('❌ WebSocket 연결 실패:', error);
             addLog('WebSocket 연결 실패: ' + (error as Error).message, 'error');
         }
-    }, [addLog, isRecording, isOn, isConnected]);
+    }, [addLog, isRecording, isOn, isConnected, cleanupResourcesOnly]);
 
     const disconnectWebSocket = useCallback(() => {
         console.log('🔌 WebSocket 수동 연결 해제 시작');
         
-        // 먼저 녹음 중이면 정리 (API 호출 포함)
+        // 먼저 녹음 중이면 API 호출 없이 리소스만 정리
         if (isRecording) {
-            console.log('🛑 연결 해제 전 녹음 중지');
-            stopRecording(); // 정상적인 녹음 중지 (API 호출 포함)
+            console.log('🛑 연결 해제 전 리소스 정리 (API 호출 없음)');
+            cleanupResourcesOnly(); // API 호출 없이 리소스만 정리
         }
         
         if (wsRef.current) {
@@ -282,35 +318,128 @@ const Home = () => {
         }
         setIsConnected(false);
         addLog('WebSocket 연결 수동 해제', 'info');
-    }, [isRecording, stopRecording, addLog]);
+    }, [isRecording, cleanupResourcesOnly, addLog]);
 
     const checkPermissions = useCallback(async () => {
         try {
+            console.log('🎤 마이크 권한 확인 시작...');
+            addLog('마이크 권한 확인 중...', 'info');
+            
+            // 1. 먼저 현재 권한 상태 확인
+            const currentPermissions = await Audio.getPermissionsAsync();
+            console.log('📋 현재 권한 상태:', currentPermissions);
+            addLog(`현재 권한 상태: ${currentPermissions.status}`, 'info');
+            
+            if (currentPermissions.status === 'granted') {
+                console.log('✅ 이미 권한이 승인됨');
+                addLog('마이크 권한이 이미 승인되어 있습니다', 'success');
+                return true;
+            }
+            
+            // 2. 권한이 없으면 요청
+            console.log('🎤 마이크 권한 요청...');
+            addLog('마이크 권한을 요청합니다...', 'info');
+            
             const { status } = await Audio.requestPermissionsAsync();
+            console.log('🎤 권한 요청 결과:', status);
+            addLog(`권한 요청 결과: ${status}`, 'info');
+            
             if (status !== 'granted') {
-                Alert.alert(
-                    '권한 필요',
-                    '음성 감지를 위해 마이크 권한이 필요합니다.',
-                    [
-                        { text: '취소', style: 'cancel' },
-                        { text: '설정으로', onPress: () => Linking.openSettings() }
-                    ]
-                );
+                console.log('❌ 권한 거부됨 또는 실패');
+                addLog('마이크 권한이 거부되었습니다', 'error');
                 return false;
             }
+            
+            console.log('✅ 권한 승인됨');
+            addLog('마이크 권한이 승인되었습니다', 'success');
             return true;
         } catch (error) {
+            console.log('❌ 권한 확인 오류:', error);
             addLog('권한 확인 오류: ' + (error as Error).message, 'error');
             return false;
         }
     }, [addLog]);
 
-    // API 호출 없는 녹음 시작 함수 (오디오만) - 권한은 이미 확인됨
-    const startRecordingAudioOnly = useCallback(async () => {
-        console.log('🎤 오디오 녹음만 시작... (권한 이미 확인됨)');
+    // 실시간 오디오 전송 함수 (HTML과 동일한 방식)
+    const startRealtimeAudioStream = useCallback(async () => {
+        console.log('🎤 실시간 오디오 스트림 시작...');
 
-        // 권한은 handlePress에서 이미 확인했으므로 바로 녹음 시작
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            console.log('❌ WebSocket 연결 필요');
+            addLog('WebSocket 연결이 필요합니다', 'error');
+            return false;
+        }
 
+        try {
+            // 1. Web Audio API 사용 (React Native Web에서 동작)
+            if (typeof window !== 'undefined' && window.navigator?.mediaDevices) {
+                console.log('🌐 웹 환경 - Web Audio API 사용');
+                
+                const stream = await window.navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false
+                    }
+                });
+
+                // AudioContext 생성
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                const audioContext = new AudioContextClass({ sampleRate: 16000 });
+                
+                const source = audioContext.createMediaStreamSource(stream);
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // 실시간 오디오 처리 (HTML과 동일)
+                processor.onaudioprocess = (e) => {
+                    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+                        console.log('⚠️ WebSocket 연결 끊김 - 오디오 전송 중지');
+                        return;
+                    }
+                    
+                    const inputBuffer = e.inputBuffer.getChannelData(0);
+                    
+                    // Float32를 Int16으로 변환 (HTML과 동일)
+                    const int16Buffer = new Int16Array(inputBuffer.length);
+                    for (let i = 0; i < inputBuffer.length; i++) {
+                        int16Buffer[i] = Math.max(-32768, Math.min(32767, inputBuffer[i] * 32768));
+                    }
+                    
+                    // WebSocket으로 실시간 전송
+                    try {
+                        wsRef.current.send(int16Buffer.buffer);
+                        console.log('📤 실시간 오디오 전송:', int16Buffer.length, 'samples');
+                    } catch (error) {
+                        console.log('❌ 오디오 전송 오류:', error);
+                    }
+                };
+                
+                // 오디오 그래프 연결
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // refs에 저장
+                audioTransmissionRef.current = { audioContext, processor, stream } as any;
+                setIsRecording(true);
+                addLog('🎤 실시간 오디오 스트림 시작!', 'success');
+                
+                return true;
+            } else {
+                // 2. Native 환경 - expo-av 사용
+                console.log('📱 네이티브 환경 - expo-av 사용');
+                return await startNativeRecording();
+            }
+            
+        } catch (error) {
+            console.log('❌ 실시간 오디오 스트림 오류:', error);
+            addLog('실시간 오디오 스트림 오류: ' + (error as Error).message, 'error');
+            return false;
+        }
+    }, [addLog]);
+
+    // Native 환경용 녹음 함수
+    const startNativeRecording = useCallback(async () => {
         try {
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
@@ -346,26 +475,18 @@ const Home = () => {
             await recording.startAsync();
             recordingRef.current = recording;
             setIsRecording(true);
-            addLog('🎤 오디오 녹음 시작됨');
+            addLog('🎤 네이티브 녹음 시작');
 
-            // WebSocket 연결 확인 후 오디오 전송 시작
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                console.log('✅ WebSocket 준비됨 - 오디오 전송 시작');
-                setTimeout(() => {
-                    startAudioDataTransmission();
-                }, 1000);
-            } else {
-                console.log('⚠️ WebSocket 연결 대기 중...');
-            }
-
+            // 실시간 전송 시작
+            startAudioDataTransmission();
             return true;
+
         } catch (error) {
-            console.log('❌ 오디오 녹음 시작 오류:', error);
-            addLog('오디오 녹음 오류: ' + (error as Error).message, 'error');
-            Alert.alert('오류', '오디오 녹음을 시작할 수 없습니다: ' + (error as Error).message);
+            console.log('❌ 네이티브 녹음 오류:', error);
+            addLog('네이티브 녹음 오류: ' + (error as Error).message, 'error');
             return false;
         }
-    }, [addLog, checkPermissions]);
+    }, [addLog]);
 
     const startAudioDataTransmission = useCallback(() => {
         // 기존 전송 중지
@@ -432,53 +553,59 @@ const Home = () => {
 
     const stopRecording = useCallback(async () => {
         try {
-            if (audioTransmissionRef.current) {
-                clearInterval(audioTransmissionRef.current);
+            console.log('🛑 실시간 오디오 스트림 중지 시작');
+            
+            // 1. 실시간 스트림 정리 (Web Audio API)
+            if (audioTransmissionRef.current && typeof audioTransmissionRef.current === 'object') {
+                const { audioContext, processor, stream } = audioTransmissionRef.current as any;
+                
+                console.log('🧹 Web Audio API 리소스 정리');
+                if (processor) {
+                    processor.disconnect();
+                    console.log('✅ ScriptProcessorNode 해제');
+                }
+                if (audioContext) {
+                    audioContext.close();
+                    console.log('✅ AudioContext 종료');
+                }
+                if (stream) {
+                    stream.getTracks().forEach((track: any) => track.stop());
+                    console.log('✅ MediaStream 중지');
+                }
+                
                 audioTransmissionRef.current = null;
             }
+            
+            // 2. 기존 interval 정리
+            else if (typeof audioTransmissionRef.current === 'number') {
+                clearInterval(audioTransmissionRef.current);
+                audioTransmissionRef.current = null;
+                console.log('✅ 오디오 전송 인터벌 정리');
+            }
 
+            // 3. expo-av 녹음 정리
             if (recordingRef.current) {
-                const status = await recordingRef.current.getStatusAsync();
-
-                if (status.isRecording) {
-                    await recordingRef.current.stopAndUnloadAsync();
-
-                    // 마지막 오디오 데이터 전송
-                    const uri = recordingRef.current.getURI();
-                    if (uri && wsRef.current?.readyState === WebSocket.OPEN) {
-                        try {
-                            const response = await fetch(uri);
-                            const audioArrayBuffer = await response.arrayBuffer();
-
-                            if (audioArrayBuffer.byteLength > 0) {
-                                wsRef.current.send(audioArrayBuffer);
-                                addLog(`📤 최종 오디오 데이터 전송: ${audioArrayBuffer.byteLength} bytes`);
-                            }
-                        } catch (error) {
-                            addLog('최종 오디오 전송 오류: ' + (error as Error).message, 'error');
-                        }
+                console.log('🧹 expo-av 녹음 리소스 정리');
+                try {
+                    const status = await recordingRef.current.getStatusAsync();
+                    if (status.isRecording) {
+                        await recordingRef.current.stopAndUnloadAsync();
+                        console.log('✅ expo-av 녹음 중지');
                     }
+                } catch (error) {
+                    console.log('⚠️ expo-av 정리 오류:', error);
                 }
-
                 recordingRef.current = null;
             }
 
             setIsRecording(false);
-            addLog('🛑 녹음 중지');
-
-            // 서버에 녹음 중지 알림 (WebSocket이 연결된 상태에서만)
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-                console.log('🔄 WebSocket 연결 상태에서 녹음 중지 API 호출');
-                await stopRecordingAPI();
-            } else {
-                console.log('⚠️ WebSocket 연결 끊김 상태 - API 호출 생략');
-                addLog('WebSocket 연결 끊김으로 API 호출 생략', 'warning');
-            }
+            addLog('🛑 실시간 오디오 스트림 중지 완료');
 
         } catch (error) {
-            addLog('녹음 중지 오류: ' + (error as Error).message, 'error');
+            console.log('❌ 오디오 스트림 중지 오류:', error);
+            addLog('오디오 스트림 중지 오류: ' + (error as Error).message, 'error');
         }
-    }, [addLog, stopRecordingAPI]);
+    }, [addLog]);
 
     const createRipple = useCallback(() => {
         const id = Date.now() + Math.random();
@@ -578,32 +705,57 @@ const Home = () => {
             // 1. 가장 먼저 권한 확인 - 버튼 누르자마자 권한 체크
             const hasPermission = await checkPermissions();
             if (!hasPermission) {
+                console.log('❌ 권한 없음 - Alert 표시 시도');
                 addLog('마이크 권한이 거부되어 녹음을 시작할 수 없습니다', 'error');
                 
-                // Alert 표시 강화 - 사용자에게 명확한 안내
-                Alert.alert(
-                    '🎤 마이크 권한 필요', 
-                    '실시간 욕설 감지를 위해서는 마이크 권한이 반드시 필요합니다.\n\n설정 방법:\n• 설정 > 개인정보 보호 및 보안 > 마이크\n• 해당 앱의 마이크 권한을 활성화',
-                    [
-                        { 
-                            text: '나중에 하기', 
-                            style: 'cancel', 
-                            onPress: () => {
-                                addLog('사용자가 권한 설정을 나중에 하기로 선택', 'info');
-                                setIsOn(false);
-                            } 
-                        },
-                        { 
-                            text: '설정 열기', 
-                            style: 'default',
-                            onPress: () => {
-                                addLog('설정 앱으로 이동', 'info');
-                                Linking.openSettings();
-                                setIsOn(false);
-                            }
-                        }
-                    ]
-                );
+                // 권한 상태 확인 후 적절한 Alert 표시
+                try {
+                    const currentPermissions = await Audio.getPermissionsAsync();
+                    console.log('📋 상세 권한 상태:', currentPermissions);
+                    
+                    let alertTitle = '🎤 마이크 권한 필요';
+                    let alertMessage = '실시간 욕설 감지를 위해서는 마이크 권한이 반드시 필요합니다.';
+                    
+                    if (currentPermissions.status === 'denied') {
+                        alertMessage += '\n\n권한이 영구적으로 거부되었습니다.\n설정에서 직접 변경해주세요.';
+                    } else if (currentPermissions.status === 'undetermined') {
+                        alertMessage += '\n\n권한을 허용해주세요.';
+                    }
+                    
+                    alertMessage += '\n\n설정 방법:\n• 설정 > 개인정보 보호 및 보안 > 마이크\n• 해당 앱의 마이크 권한을 활성화';
+                    
+                    console.log('📱 Alert 표시 시도:', alertTitle);
+                    
+                    setTimeout(() => {
+                        Alert.alert(
+                            alertTitle,
+                            alertMessage,
+                            [
+                                { 
+                                    text: '나중에 하기', 
+                                    style: 'cancel', 
+                                    onPress: () => {
+                                        console.log('👤 사용자가 나중에 하기 선택');
+                                        addLog('사용자가 권한 설정을 나중에 하기로 선택', 'info');
+                                    } 
+                                },
+                                { 
+                                    text: '설정 열기', 
+                                    style: 'default',
+                                    onPress: () => {
+                                        console.log('⚙️ 설정 앱 열기');
+                                        addLog('설정 앱으로 이동', 'info');
+                                        Linking.openSettings();
+                                    }
+                                }
+                            ]
+                        );
+                    }, 100); // 약간의 지연 후 Alert 표시
+                    
+                } catch (alertError) {
+                    console.log('❌ Alert 표시 오류:', alertError);
+                    addLog('Alert 표시 실패: ' + (alertError as Error).message, 'error');
+                }
                 
                 // 권한이 없으면 여기서 종료 - API 호출 없음
                 setIsOn(false);
@@ -635,14 +787,13 @@ const Home = () => {
                 }
             }
 
-            console.log('🔄 4단계: 오디오 녹음 시작 (권한 이미 확인됨)');
-            // 4. 마지막으로 오디오 녹음 시작 (권한은 이미 확인됨)
+            console.log('🔄 4단계: 실시간 오디오 스트림 시작 (권한 이미 확인됨)');
+            // 4. 실시간 오디오 스트림 시작 (HTML과 동일한 방식)
             if (!isRecording) {
-                const recordingSuccess = await startRecordingAudioOnly();
-                if (!recordingSuccess) {
-                    // 권한은 있지만 녹음 실패시에만 API 종료
-                    addLog('오디오 녹음 시작 실패 - API 종료 호출', 'error');
-                    await stopRecordingAPI();
+                const streamSuccess = await startRealtimeAudioStream();
+                if (!streamSuccess) {
+                    // 스트림 시작 실패 시 정리
+                    addLog('실시간 오디오 스트림 시작 실패', 'error');
                     setIsOn(false);
                     return;
                 }
@@ -668,7 +819,7 @@ const Home = () => {
                 useNativeDriver: false,
             }),
         ]).start();
-    }, [isOn, createRipple, outerColorAnim, middleColorAnim, isConnected, isRecording, startRecordingAPI, connectWebSocket, waitForConnection, addLog, stopRecordingAPI, startRecordingAudioOnly]);
+    }, [isOn, createRipple, outerColorAnim, middleColorAnim, isConnected, isRecording, startRecordingAPI, connectWebSocket, waitForConnection, addLog, stopRecordingAPI, checkPermissions, startRealtimeAudioStream, stopRecording]);
 
     const interpolatedValues = useMemo(
         () => ({
