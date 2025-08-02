@@ -1,245 +1,270 @@
 import { View, Pressable, Animated, Easing, StyleSheet } from "react-native";
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback, useMemo } from "react";
 import OffIcon from "@/assets/icons/off";
 
+interface Ripple {
+  id: number;
+  scale: Animated.Value;
+  opacity: Animated.Value;
+}
+
 const Home = () => {
-    const [isOn, setIsOn] = useState(false);
-    const [ripples, setRipples] = useState([]);
+  const [isOn, setIsOn] = useState(false);
+  const [ripples, setRipples] = useState<Ripple[]>([]);
 
-    const buttonScale = useRef(new Animated.Value(1)).current;
-    const shadowAnim = useRef(new Animated.Value(1)).current;
-    const outerColorAnim = useRef(new Animated.Value(0)).current;
-    const middleColorAnim = useRef(new Animated.Value(0)).current;
+  // Animated Values - 초기화를 한 번만 수행
+  const buttonScale = useRef(new Animated.Value(1)).current;
+  const shadowAnim = useRef(new Animated.Value(1)).current;
+  const outerColorAnim = useRef(new Animated.Value(0)).current;
+  const middleColorAnim = useRef(new Animated.Value(0)).current;
 
-    const createRipple = () => {
-        const id = Date.now();
-        const scale = new Animated.Value(0);
-        const opacity = new Animated.Value(0.5);
+  // Ripple 생성 함수 최적화
+  const createRipple = useCallback(() => {
+    const id = Date.now() + Math.random(); // 고유성 보장
+    const scale = new Animated.Value(0);
+    const opacity = new Animated.Value(0.4);
 
-        setRipples(prev => [...prev, { id, scale, opacity }]);
+    const newRipple: Ripple = { id, scale, opacity };
 
-        Animated.parallel([
-            Animated.timing(scale, {
-                toValue: 1,
-                duration: 600,
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-            }),
-            Animated.timing(opacity, {
-                toValue: 0,
-                duration: 600,
-                useNativeDriver: false,
-            }),
-        ]).start(() => {
-            setRipples(prev => prev.filter(ripple => ripple.id !== id));
-        });
-    };
+    setRipples((prev) => [...prev, newRipple]);
 
-    const handlePressIn = () => {
-        Animated.parallel([
-            Animated.timing(buttonScale, {
-                toValue: 0.95,
-                duration: 120,
-                useNativeDriver: false,
-            }),
-            Animated.timing(shadowAnim, {
-                toValue: 0.3,
-                duration: 120,
-                useNativeDriver: false,
-            }),
-        ]).start();
-    };
+    Animated.parallel([
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: 800,
+        easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+        useNativeDriver: false,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 800,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setRipples((prev) => prev.filter((ripple) => ripple.id !== id));
+    });
+  }, []);
 
-    const handlePressOut = () => {
-        Animated.parallel([
-            Animated.timing(buttonScale, {
-                toValue: 1,
-                duration: 200,
-                easing: Easing.out(Easing.back(1.05)),
-                useNativeDriver: false,
-            }),
-            Animated.timing(shadowAnim, {
-                toValue: 1,
-                duration: 200,
-                useNativeDriver: false,
-            }),
-        ]).start();
-    };
+  // Press 핸들러들 최적화
+  const handlePressIn = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(buttonScale, {
+        toValue: 0.96,
+        useNativeDriver: false,
+        tension: 300,
+        friction: 8,
+      }),
+      Animated.timing(shadowAnim, {
+        toValue: 0.4,
+        duration: 150,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [buttonScale, shadowAnim]);
 
-    const handlePress = () => {
-        const toValue = isOn ? 0 : 1;
-        setIsOn(!isOn);
-        createRipple();
+  const handlePressOut = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(buttonScale, {
+        toValue: 1,
+        useNativeDriver: false,
+        tension: 200,
+        friction: 7,
+      }),
+      Animated.timing(shadowAnim, {
+        toValue: 1,
+        duration: 250,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [buttonScale, shadowAnim]);
 
-        Animated.parallel([
-            Animated.timing(outerColorAnim, {
-                toValue,
-                duration: 300,
-                useNativeDriver: false,
-            }),
-            Animated.timing(middleColorAnim, {
-                toValue,
-                duration: 300,
-                useNativeDriver: false,
-            }),
-        ]).start();
-    };
+  const handlePress = useCallback(() => {
+    const newIsOn = !isOn;
+    const toValue = newIsOn ? 1 : 0;
 
-    const outerBg = outerColorAnim.interpolate({
+    setIsOn(newIsOn);
+    createRipple();
+
+    Animated.parallel([
+      Animated.timing(outerColorAnim, {
+        toValue,
+        duration: 350,
+        easing: Easing.bezier(0.4, 0, 0.2, 1),
+        useNativeDriver: false,
+      }),
+      Animated.timing(middleColorAnim, {
+        toValue,
+        duration: 350,
+        easing: Easing.bezier(0.4, 0, 0.2, 1),
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [isOn, createRipple, outerColorAnim, middleColorAnim]);
+
+  // Interpolated values를 useMemo로 최적화
+  const interpolatedValues = useMemo(
+    () => ({
+      outerBg: outerColorAnim.interpolate({
         inputRange: [0, 1],
         outputRange: ["#2C2C2C", "#845125"],
-    });
-
-    const middleBg = middleColorAnim.interpolate({
+      }),
+      middleBg: middleColorAnim.interpolate({
         inputRange: [0, 1],
         outputRange: ["#6D6D6D", "#FF7F11"],
-    });
-
-    const shadowOpacity = shadowAnim.interpolate({
+      }),
+      shadowOpacity: shadowAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [0.15, 0.4],
-    });
-
-    const shadowRadius = shadowAnim.interpolate({
+        outputRange: [0.2, 0.45],
+      }),
+      shadowRadius: shadowAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [8, 16],
-    });
-
-    const shadowOffset = shadowAnim.interpolate({
+        outputRange: [12, 20],
+      }),
+      shadowOffset: shadowAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [3, 8],
-    });
+        outputRange: [4, 10],
+      }),
+    }),
+    [outerColorAnim, middleColorAnim, shadowAnim]
+  );
 
-    return (
-        <View style={styles.container}>
-            <Pressable
-                onPressIn={handlePressIn}
-                onPressOut={handlePressOut}
-                onPress={handlePress}
-            >
-                <Animated.View
-                    style={[
-                        styles.outerCircle,
-                        {
-                            backgroundColor: outerBg,
-                            transform: [{ scale: buttonScale }],
-                            shadowOpacity,
-                            shadowRadius,
-                            shadowOffset: {
-                                width: 0,
-                                height: shadowOffset
-                            },
-                        }
-                    ]}
-                >
-                    <View style={styles.innerShadow} />
-                    <View style={styles.highlight} />
+  return (
+    <View style={styles.container}>
+      <Pressable
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={handlePress}
+        accessible={true}
+        accessibilityLabel={`Power button, currently ${isOn ? "on" : "off"}`}
+        accessibilityRole="button"
+      >
+        <Animated.View
+          style={[
+            styles.outerCircle,
+            {
+              backgroundColor: interpolatedValues.outerBg,
+              transform: [{ scale: buttonScale }],
+              shadowOpacity: interpolatedValues.shadowOpacity,
+              shadowRadius: interpolatedValues.shadowRadius,
+              shadowOffset: {
+                width: 0,
+                height: interpolatedValues.shadowOffset,
+              },
+            },
+          ]}
+        >
+          <Animated.View
+            style={[
+              styles.middleCircle,
+              { backgroundColor: interpolatedValues.middleBg },
+            ]}
+          >
+            {ripples.map((ripple) => (
+              <Animated.View
+                key={ripple.id}
+                style={[
+                  styles.ripple,
+                  {
+                    backgroundColor: isOn
+                      ? "rgba(255, 255, 255, 0.2)"
+                      : "rgba(255, 127, 17, 0.15)",
+                    opacity: ripple.opacity,
+                    transform: [
+                      {
+                        scale: ripple.scale.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.3, 1.4],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              />
+            ))}
 
-                    <Animated.View
-                        style={[
-                            styles.middleCircle,
-                            { backgroundColor: middleBg }
-                        ]}
-                    >
-                        {ripples.map(ripple => (
-                            <Animated.View
-                                key={ripple.id}
-                                style={[
-                                    styles.ripple,
-                                    {
-                                        backgroundColor: isOn ? "#FF7F11" : "#696969",
-                                        opacity: ripple.opacity,
-                                        transform: [{
-                                            scale: ripple.scale.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0.2, 1.6]
-                                            })
-                                        }]
-                                    }
-                                ]}
-                            />
-                        ))}
-
-                        <View style={styles.centerButton}>
-                            <OffIcon fill={isOn ? "#FF7F11" : "#696969"} />
-                        </View>
-                    </Animated.View>
-                </Animated.View>
-            </Pressable>
-        </View>
-    );
+            <View style={styles.centerButton}>
+              <View style={styles.centerButtonBackdrop} />
+              <View style={styles.centerButtonHighlight} />
+              <OffIcon fill={isOn ? "#FF7F11" : "#696969"} />
+            </View>
+          </Animated.View>
+        </Animated.View>
+      </Pressable>
+    </View>
+  );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: "#121212",
-        justifyContent: "center",
-        alignItems: "center",
-    },
-    outerCircle: {
-        width: 250,
-        height: 250,
-        borderRadius: 125,
-        justifyContent: "center",
-        alignItems: "center",
-        shadowColor: "#000",
-        elevation: 12,
-        overflow: "hidden",
-        position: "relative",
-    },
-    innerShadow: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        borderRadius: 125,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        backgroundColor: "transparent",
-    },
-    highlight: {
-        position: "absolute",
-        top: 8,
-        left: 8,
-        right: 8,
-        bottom: 8,
-        borderRadius: 117,
-        borderWidth: 1,
-        borderColor: "rgba(255, 255, 255, 0.08)",
-        backgroundColor: "transparent",
-    },
-    middleCircle: {
-        width: 210,
-        height: 210,
-        borderRadius: 105,
-        justifyContent: "center",
-        alignItems: "center",
-        overflow: "hidden",
-    },
-    ripple: {
-        position: "absolute",
-        width: 175,
-        height: 175,
-        borderRadius: 87.5,
-    },
-    centerButton: {
-        width: 175,
-        height: 175,
-        borderRadius: 87.5,
-        backgroundColor: "#EDEDED",
-        justifyContent: "center",
-        alignItems: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 4,
-        elevation: 3,
-        zIndex: 1,
-    },
+  container: {
+    flex: 1,
+    backgroundColor: "#121212",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  outerCircle: {
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 12,
+    // 깔끔한 글래스모피즘
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  middleCircle: {
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  ripple: {
+    position: "absolute",
+    width: 175,
+    height: 175,
+    borderRadius: 87.5,
+  },
+  centerButton: {
+    width: 175,
+    height: 175,
+    borderRadius: 87.5,
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
+    zIndex: 1,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.4)",
+  },
+  centerButtonBackdrop: {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    borderRadius: 87.5,
+  },
+  centerButtonHighlight: {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    borderRadius: 87.5,
+  },
 });
 
 export default Home;
