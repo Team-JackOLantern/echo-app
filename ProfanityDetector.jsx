@@ -63,9 +63,9 @@ const ProfanityDetector = () => {
 				clearTimeout(connectionTimeout);
 				setIsConnected(true);
 				setConnectionStatus('connected');
-				addLog('WebSocket 연결 성공', 'success');
+				addLog('WebSocket 연결 성공 - 오디오 녹음 준비 완료', 'success');
 
-				// 연결 확인을 위한 keep-alive 메시지 전송
+				// 연결 확인을 위한 keep-alive 메시지 전송 (응답 대기하지 않음)
 				setTimeout(() => {
 					if (wsRef.current?.readyState === WebSocket.OPEN) {
 						try {
@@ -76,51 +76,68 @@ const ProfanityDetector = () => {
 								user_id: userId,
 							});
 							wsRef.current.send(keepAliveMessage);
-							addLog('Keep-alive 메시지 전송');
+							addLog('연결 상태 확인 메시지 전송');
 						} catch (error) {
-							addLog(`Keep-alive 전송 오류: ${error.message}`, 'error');
+							addLog(`연결 상태 확인 오류: ${error.message}`, 'warning');
 						}
 					}
-				}, 1000);
+				}, 500);
 			};
 
 			wsRef.current.onmessage = (event) => {
 				try {
-					const data = JSON.parse(event.data);
-					addLog(`메시지 수신: ${event.data}`);
+					// 텍스트 메시지인 경우 JSON 파싱 시도
+					if (typeof event.data === 'string') {
+						const data = JSON.parse(event.data);
+						addLog(`서버 응답: ${JSON.stringify(data)}`, 'info');
 
-					switch (data.type) {
-						case 'pong':
-							addLog('Pong 응답 수신 - 연결 활성', 'success');
-							break;
+						switch (data.type) {
+							case 'pong':
+							case 'keep_alive_response':
+								addLog('서버 연결 상태 확인됨', 'success');
+								break;
 
-						case 'detection':
-							setDetectionResult({
-								text: data.text,
-								pattern: data.pattern,
-								confidence: data.confidence,
-								timestamp: data.timestamp,
-							});
-							addLog(`욕설 감지! 텍스트: "${data.text}", 패턴: "${data.pattern}", 신뢰도: ${data.confidence}`, 'detection');
-
-							// 브라우저 알림 표시
-							if (Notification.permission === 'granted') {
-								new Notification('욕설 감지!', {
-									body: `"${data.text}" 감지됨 (신뢰도: ${Math.round(data.confidence * 100)}%)`,
-									icon: '🚨',
+							case 'detection':
+								setDetectionResult({
+									text: data.text,
+									pattern: data.pattern,
+									confidence: data.confidence,
+									timestamp: data.timestamp,
 								});
-							}
-							break;
+								addLog(`🚨 욕설 감지! "${data.text}" (신뢰도: ${Math.round(data.confidence * 100)}%)`, 'detection');
 
-						case 'error':
-							addLog(`서버 에러: ${data.message}`, 'error');
-							break;
+								// 브라우저 알림 표시
+								if (Notification.permission === 'granted') {
+									new Notification('욕설 감지!', {
+										body: `"${data.text}" 감지됨 (신뢰도: ${Math.round(data.confidence * 100)}%)`,
+										icon: '🚨',
+									});
+								}
+								break;
 
-						default:
-							addLog(`알 수 없는 메시지 타입: ${data.type}`, 'warning');
+							case 'transcription':
+								// 음성 인식 결과 (욕설이 아닌 일반 텍스트)
+								addLog(`음성 인식: "${data.text}"`, 'info');
+								break;
+
+							case 'error':
+								addLog(`서버 에러: ${data.message}`, 'error');
+								break;
+
+							case 'status':
+								addLog(`서버 상태: ${data.message}`, 'info');
+								break;
+
+							default:
+								addLog(`알 수 없는 메시지: ${data.type}`, 'warning');
+						}
+					} else {
+						// 바이너리 데이터는 로그만 출력
+						addLog('바이너리 응답 수신', 'info');
 					}
 				} catch (error) {
-					addLog(`메시지 파싱 오류: ${error.message}`, 'error');
+					// JSON 파싱 실패 시 원본 메시지 표시
+					addLog(`서버 메시지: ${event.data}`, 'info');
 				}
 			};
 
@@ -256,21 +273,34 @@ const ProfanityDetector = () => {
 			return;
 		}
 
+		addLog('🎤 마이크 권한 요청 중...', 'info');
+
 		try {
+			// 1. 마이크 권한 요청
 			const stream = await requestMicrophonePermission();
 			streamRef.current = stream;
+			addLog('✅ 마이크 권한 승인됨', 'success');
 
-			// AudioContext 설정 (16kHz, 16bit PCM)
-			const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+			// 2. AudioContext 설정
+			addLog('🔧 오디오 컨텍스트 설정 중...', 'info');
+			const AudioContextClass = window.AudioContext || window['webkitAudioContext'];
 			audioContextRef.current = new AudioContextClass({
 				sampleRate: 16000,
 			});
 
-			const source = audioContextRef.current.createMediaStreamSource(stream);
+			// AudioContext 활성화 (사용자 제스처 필요)
+			if (audioContextRef.current.state === 'suspended') {
+				await audioContextRef.current.resume();
+				addLog('오디오 컨텍스트 활성화됨', 'success');
+			}
 
-			// ScriptProcessorNode를 사용한 실시간 오디오 처리
+			const source = audioContextRef.current.createMediaStreamSource(stream);
+			addLog('📡 오디오 소스 생성됨', 'success');
+
+			// 3. 오디오 프로세서 설정
 			processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
 
+			let audioChunkCount = 0;
 			processorRef.current.onaudioprocess = (event) => {
 				if (!isConnected || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
 					return;
@@ -279,15 +309,15 @@ const ProfanityDetector = () => {
 				const inputBuffer = event.inputBuffer;
 				const inputData = inputBuffer.getChannelData(0);
 
-				// 음성 활동 감지 (간단한 볼륨 체크)
+				// 음성 활동 감지
 				let sum = 0;
 				for (let i = 0; i < inputData.length; i++) {
 					sum += Math.abs(inputData[i]);
 				}
 				const avgVolume = sum / inputData.length;
 
-				// 볼륨이 임계값 이상일 때만 전송 (노이즈 필터링)
-				if (avgVolume > 0.01) {
+				// 볼륨 임계값 확인 및 전송
+				if (avgVolume > 0.005) { // 임계값 낮춤
 					try {
 						// Float32Array를 16bit PCM으로 변환
 						const pcmBuffer = new Int16Array(inputData.length);
@@ -296,21 +326,35 @@ const ProfanityDetector = () => {
 							pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
 						}
 
-						// 바이너리 데이터로 전송
+						// 바이너리 데이터 전송
 						wsRef.current.send(pcmBuffer.buffer);
+						audioChunkCount++;
+
+						// 5초마다 전송 상태 로그
+						if (audioChunkCount % 200 === 0) {
+							addLog(`📤 오디오 데이터 전송 중... (볼륨: ${avgVolume.toFixed(4)})`, 'info');
+						}
 					} catch (error) {
 						addLog(`오디오 전송 오류: ${error.message}`, 'error');
 					}
 				}
 			};
 
+			// 4. 오디오 그래프 연결
 			source.connect(processorRef.current);
 			processorRef.current.connect(audioContextRef.current.destination);
 
 			setIsRecording(true);
-			addLog('오디오 녹음 시작 (16kHz, 16bit PCM)', 'success');
+			addLog('🎤 실시간 오디오 녹음 시작! 말해보세요...', 'success');
+
 		} catch (error) {
-			addLog(`녹음 시작 오류: ${error.message}`, 'error');
+			addLog(`녹음 시작 실패: ${error.message}`, 'error');
+			
+			// 에러 발생 시 정리
+			if (streamRef.current) {
+				streamRef.current.getTracks().forEach(track => track.stop());
+				streamRef.current = null;
+			}
 		}
 	}, [isRecording, isConnected, requestMicrophonePermission, addLog]);
 
