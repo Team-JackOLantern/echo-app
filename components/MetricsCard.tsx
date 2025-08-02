@@ -1,6 +1,5 @@
 import React from "react";
 import { View, Text, StyleSheet, Platform } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import Svg, {
   Circle,
   Defs,
@@ -12,16 +11,12 @@ interface CircularProgressProps {
   progress: number;
   size: number;
   strokeWidth: number;
-  color: string;
-  backgroundColor: string;
 }
 
 const CircularProgress: React.FC<CircularProgressProps> = ({
   progress,
   size,
   strokeWidth,
-  color,
-  backgroundColor,
 }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
@@ -47,7 +42,7 @@ const CircularProgress: React.FC<CircularProgressProps> = ({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke={backgroundColor}
+          stroke="#2A2A2A"
           strokeWidth={strokeWidth}
           fill="transparent"
         />
@@ -86,10 +81,7 @@ const MetricsCard: React.FC<MetricsCardProps> = ({
 
   return (
     <View style={[styles.metricsSection, compact && styles.compactMetrics]}>
-      <LinearGradient
-        colors={["#1A1A1A", "#242424"]}
-        style={[styles.metricCard, compact && styles.compactCard]}
-      >
+      <View style={[styles.metricCard, compact && styles.compactCard]}>
         <Text style={[styles.metricTitle, compact && styles.compactTitle]}>
           활성화 시간
         </Text>
@@ -98,8 +90,6 @@ const MetricsCard: React.FC<MetricsCardProps> = ({
             progress={activeTimePercent}
             size={size}
             strokeWidth={strokeWidth}
-            color="#FF7F11"
-            backgroundColor="#2A2A2A"
           />
           <View
             style={[
@@ -112,12 +102,9 @@ const MetricsCard: React.FC<MetricsCardProps> = ({
             </Text>
           </View>
         </View>
-      </LinearGradient>
+      </View>
 
-      <LinearGradient
-        colors={["#1A1A1A", "#242424"]}
-        style={[styles.metricCard, compact && styles.compactCard]}
-      >
+      <View style={[styles.metricCard, compact && styles.compactCard]}>
         <Text style={[styles.metricTitle, compact && styles.compactTitle]}>
           진동 횟수
         </Text>
@@ -131,7 +118,7 @@ const MetricsCard: React.FC<MetricsCardProps> = ({
             회
           </Text>
         </View>
-      </LinearGradient>
+      </View>
     </View>
   );
 };
@@ -147,24 +134,14 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     flex: 1,
-    borderRadius: 20,
-    padding: 24,
     alignItems: "center",
     minHeight: 160,
     justifyContent: "space-between",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
+    paddingVertical: 24,
   },
   compactCard: {
-    padding: 16,
     minHeight: 120,
-    borderRadius: 16,
+    paddingVertical: 16,
   },
   metricTitle: {
     fontSize: 14,
