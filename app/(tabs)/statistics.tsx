@@ -18,24 +18,30 @@ import Svg, {
   LinearGradient as SvgLinearGradient,
   Stop,
   Circle,
+  Line,
 } from "react-native-svg";
 import { LinearGradient } from "expo-linear-gradient";
-import MetricsCard from "@/components/MetricsCard";
 import { StatusBar } from "expo-status-bar";
+import MetricsCard from "@/components/MetricsCard";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const TABS = ["오늘", "이번 주"] as const;
-type TabType = (typeof TABS)[number];
 
-const DATASETS: Record<TabType, number[]> = {
-  오늘: [5, 8, 12, 15, 18, 22, 16],
-  "이번 주": [20, 45, 28, 80, 99, 43, 50],
-};
+const HOURLY_DATA = Array.from({ length: 24 }, (_, i) => ({
+  hour: i,
+  value: Math.floor(Math.random() * 30) + 5,
+  label: `${i}시`,
+}));
 
-const LABELS: Record<TabType, string[]> = {
-  오늘: ["6시", "9시", "12시", "15시", "18시", "21시", "24시"],
-  "이번 주": ["월", "화", "수", "목", "금", "토", "일"],
-};
+const WEEKLY_DATA = [
+  { day: "월", value: 45, label: "월" },
+  { day: "화", value: 32, label: "화" },
+  { day: "수", value: 67, label: "수" },
+  { day: "목", value: 23, label: "목" },
+  { day: "금", value: 89, label: "금" },
+  { day: "토", value: 56, label: "토" },
+  { day: "일", value: 34, label: "일" },
+];
 
 const WORDS = [
   { word: "시발", count: 24 },
@@ -46,31 +52,45 @@ const WORDS = [
 ];
 
 interface CustomChartProps {
-  data: number[];
-  labels: string[];
-  width: number;
-  height: number;
+  type: "today" | "week";
 }
 
-const CustomChart: React.FC<CustomChartProps> = ({
-  data,
-  labels,
-  width,
-  height,
-}) => {
-  const padding = 40;
-  const chartWidth = width - padding * 2;
-  const chartHeight = height - padding * 2;
+const CustomChart: React.FC<CustomChartProps> = ({ type }) => {
+  const [selectedPoint, setSelectedPoint] = useState<number | null>(null);
 
-  const maxValue = Math.max(...data);
-  const minValue = Math.min(...data);
+  const chartHeight = 200;
+  const padding = 20;
+
+  const data = type === "today" ? HOURLY_DATA : WEEKLY_DATA;
+  const maxValue = Math.max(...data.map((d) => d.value));
+  const minValue = Math.min(...data.map((d) => d.value));
   const valueRange = maxValue - minValue || 1;
 
-  const points = data.map((value, index) => {
-    const x = padding + (index * chartWidth) / (data.length - 1);
+  const visibleData = data;
+  const pointSpacing = type === "today" ? 50 : 0;
+
+  const chartWidth =
+    type === "today"
+      ? visibleData.length * pointSpacing + padding * 2
+      : SCREEN_WIDTH - 40;
+
+  const points = visibleData.map((item, index) => {
+    const x =
+      type === "today"
+        ? padding + index * pointSpacing
+        : padding +
+          (index * (chartWidth - padding * 2)) /
+            Math.max(visibleData.length - 1, 1);
     const y =
-      padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
-    return { x, y, value };
+      padding +
+      (chartHeight - padding * 2) -
+      ((item.value - minValue) / valueRange) * (chartHeight - padding * 2);
+    return {
+      x,
+      y,
+      value: item.value,
+      label: item.label,
+    };
   });
 
   const pathData = points.reduce((path, point, index) => {
@@ -78,20 +98,34 @@ const CustomChart: React.FC<CustomChartProps> = ({
       return `M ${point.x} ${point.y}`;
     }
     const prevPoint = points[index - 1];
-    const cp1x = prevPoint.x + (point.x - prevPoint.x) / 3;
+    const cp1x = prevPoint.x + (point.x - prevPoint.x) / 2.5;
     const cp1y = prevPoint.y;
-    const cp2x = point.x - (point.x - prevPoint.x) / 3;
+    const cp2x = point.x - (point.x - prevPoint.x) / 2.5;
     const cp2y = point.y;
     return `${path} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${point.x} ${point.y}`;
   }, "");
 
-  const areaPath = `${pathData} L ${points[points.length - 1].x} ${
-    height - padding
-  } L ${padding} ${height - padding} Z`;
+  const areaPath = `${pathData} L ${points[points.length - 1]?.x || 0} ${
+    chartHeight - padding
+  } L ${padding} ${chartHeight - padding} Z`;
 
-  return (
-    <View style={styles.chartWrapper}>
-      <Svg width={width} height={height}>
+  const handlePointPress = (index: number) => {
+    setSelectedPoint(selectedPoint === index ? null : index);
+  };
+
+  const getTooltipLeft = (pointX: number) => {
+    const tooltipWidth = 75;
+    const viewportWidth = SCREEN_WIDTH - 40;
+    const tooltipLeft = pointX - tooltipWidth / 2;
+    return Math.max(
+      15,
+      Math.min(tooltipLeft, viewportWidth - tooltipWidth - 15)
+    );
+  };
+
+  const ChartContent = () => (
+    <View style={styles.chartContainer}>
+      <Svg width={chartWidth} height={chartHeight}>
         <Defs>
           <SvgLinearGradient
             id="areaGradient"
@@ -100,7 +134,8 @@ const CustomChart: React.FC<CustomChartProps> = ({
             x2="0%"
             y2="100%"
           >
-            <Stop offset="0%" stopColor="#FF7F11" stopOpacity="0.3" />
+            <Stop offset="0%" stopColor="#FF7F11" stopOpacity="0.25" />
+            <Stop offset="40%" stopColor="#FF7F11" stopOpacity="0.15" />
             <Stop offset="100%" stopColor="#FF7F11" stopOpacity="0" />
           </SvgLinearGradient>
           <SvgLinearGradient
@@ -111,6 +146,7 @@ const CustomChart: React.FC<CustomChartProps> = ({
             y2="0%"
           >
             <Stop offset="0%" stopColor="#FF9F40" />
+            <Stop offset="50%" stopColor="#FF8C28" />
             <Stop offset="100%" stopColor="#FF7F11" />
           </SvgLinearGradient>
         </Defs>
@@ -120,29 +156,121 @@ const CustomChart: React.FC<CustomChartProps> = ({
         <Path
           d={pathData}
           stroke="url(#lineGradient)"
-          strokeWidth="3"
+          strokeWidth="2.5"
           fill="transparent"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+
+        {selectedPoint !== null && points[selectedPoint] && (
+          <Line
+            x1={points[selectedPoint].x}
+            y1={points[selectedPoint].y}
+            x2={points[selectedPoint].x}
+            y2={chartHeight - padding}
+            stroke="#FFFFFF"
+            strokeWidth="1.5"
+            strokeDasharray="4,4"
+            opacity="0.6"
+          />
+        )}
 
         {points.map((point, index) => (
           <Circle
             key={index}
             cx={point.x}
             cy={point.y}
-            r="4"
+            r={selectedPoint === index ? "6" : "4"}
             fill="#FF7F11"
             stroke="#FFFFFF"
             strokeWidth="2"
+            strokeOpacity="0.3"
           />
         ))}
       </Svg>
 
+      {points.map((point, index) => (
+        <TouchableOpacity
+          key={`touch-${index}`}
+          onPress={() => handlePointPress(index)}
+          style={{
+            position: "absolute",
+            left: point.x - 25,
+            top: point.y - 25,
+            width: 50,
+            height: 50,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        />
+      ))}
+
+      {selectedPoint !== null && points[selectedPoint] && (
+        <View
+          style={[
+            styles.tooltip,
+            {
+              left: getTooltipLeft(points[selectedPoint].x),
+              top: 10,
+              width: 75,
+              height: 50,
+            },
+          ]}
+        >
+          <Text style={styles.tooltipText}>
+            {points[selectedPoint].value}회
+          </Text>
+          <Text style={styles.tooltipLabel}>{points[selectedPoint].label}</Text>
+        </View>
+      )}
+
+      {/* 오늘 탭일 때만 라벨을 차트 안에 포함 */}
+      {type === "today" && (
+        <View style={styles.chartLabelsInside}>
+          {points.map((point, index) => (
+            <Text
+              key={index}
+              style={[
+                styles.chartLabel,
+                {
+                  position: "absolute",
+                  left: point.x - 15,
+                  width: 30,
+                  bottom: -30,
+                },
+              ]}
+            >
+              {point.label}
+            </Text>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+
+  if (type === "today") {
+    return (
+      <View style={styles.chartWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingRight: 40 }}
+          style={{ width: SCREEN_WIDTH - 40 }}
+        >
+          <ChartContent />
+        </ScrollView>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.chartWrapper}>
+      <ChartContent />
+      {/* 이번주 탭일 때만 외부에 라벨 표시 */}
       <View style={styles.chartLabels}>
-        {labels.map((label, index) => (
+        {points.map((point, index) => (
           <Text key={index} style={styles.chartLabel}>
-            {label}
+            {point.label}
           </Text>
         ))}
       </View>
@@ -152,14 +280,10 @@ const CustomChart: React.FC<CustomChartProps> = ({
 
 const Statistics = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const translateX = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
+  const translateX = useRef(new Animated.Value(0)).current;
 
   const tabWidth = useMemo(() => (SCREEN_WIDTH - 48 - 8) / 2, []);
-
-  const currentLabel = TABS[selectedIndex];
-  const currentData = DATASETS[currentLabel];
-  const currentLabels = LABELS[currentLabel];
 
   const onTabPress = useCallback(
     (index: number) => {
@@ -195,119 +319,115 @@ const Statistics = () => {
   return (
     <>
       <StatusBar style="light" />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[
-          styles.contentContainer,
-          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 100 },
-        ]}
-        showsVerticalScrollIndicator={false}
+      <LinearGradient
+        colors={["#0A0A0A", "#0F0F0F", "#141414"]}
+        style={styles.container}
       >
-        {/* Header Section */}
-        <View style={styles.headerContainer}>
-          <Text style={styles.headerName}>이재환 님</Text>
-          <Text style={styles.headerSubtitle}>
-            지난 기록을 한눈에 정리했어요.
-          </Text>
-        </View>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[
+            styles.contentContainer,
+            { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 100 },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.headerContainer}>
+            <Text style={styles.headerName}>jbj338033 님</Text>
+            <Text style={styles.headerSubtitle}>
+              지난 기록을 한눈에 정리했어요.
+            </Text>
+          </View>
 
-        {/* Tab Section */}
-        <View style={styles.tabWrapper}>
-          <View style={styles.tabContainer}>
-            <Animated.View
-              style={[
-                styles.activeTabHighlight,
-                {
-                  transform: [{ translateX }],
-                  width: tabWidth,
-                },
-              ]}
-            />
-            {TABS.map((tab, i) => (
-              <TouchableOpacity
-                key={tab}
-                onPress={() => onTabPress(i)}
-                style={styles.tabButton}
-                activeOpacity={0.7}
-              >
-                <Text
-                  style={[
-                    styles.tabText,
-                    selectedIndex === i && styles.activeTabText,
-                  ]}
+          <View style={styles.tabWrapper}>
+            <View style={styles.tabContainer}>
+              <Animated.View
+                style={[
+                  styles.activeTabHighlight,
+                  {
+                    transform: [{ translateX }],
+                    width: tabWidth,
+                  },
+                ]}
+              />
+              {TABS.map((tab, i) => (
+                <TouchableOpacity
+                  key={tab}
+                  onPress={() => onTabPress(i)}
+                  style={styles.tabButton}
+                  activeOpacity={0.7}
                 >
-                  {tab}
-                </Text>
-              </TouchableOpacity>
+                  <Text
+                    style={[
+                      styles.tabText,
+                      selectedIndex === i && styles.activeTabText,
+                    ]}
+                  >
+                    {tab}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.chartSection}>
+            <Text style={styles.chartTitle}>욕설 사용 빈도</Text>
+            <CustomChart type={selectedIndex === 0 ? "today" : "week"} />
+          </View>
+
+          <View style={styles.metricsContainer}>
+            <MetricsCard
+              activeTime="68:12"
+              vibrationCount={12}
+              activeTimePercent={68.2}
+              compact={true}
+            />
+          </View>
+
+          <View style={styles.wordListContainer}>
+            <Text style={styles.sectionTitle}>자주 사용한 욕설</Text>
+            {WORDS.map((item, index) => (
+              <LinearGradient
+                key={`${item.word}-${index}`}
+                colors={["#1A1A1A", "#1F1F1F"]}
+                style={styles.wordItem}
+              >
+                <View style={styles.rankBadge}>
+                  <Text style={styles.rankText}>{index + 1}</Text>
+                </View>
+                <Text style={styles.wordText}>{item.word}</Text>
+                <View style={styles.wordCountBadge}>
+                  <Text style={styles.wordCount}>{item.count}회</Text>
+                </View>
+              </LinearGradient>
             ))}
           </View>
-        </View>
 
-        {/* Chart Section */}
-        <View style={styles.chartContainer}>
-          <Text style={styles.chartTitle}>욕설 사용 빈도</Text>
-          <CustomChart
-            data={currentData}
-            labels={currentLabels}
-            width={SCREEN_WIDTH - 64}
-            height={200}
-          />
-        </View>
-
-        {/* Metrics Section */}
-        <View style={styles.metricsWrapper}>
-          <MetricsCard
-            activeTime="68:12"
-            vibrationCount={12}
-            activeTimePercent={68.2}
-            compact={false}
-          />
-        </View>
-
-        {/* Word List Section */}
-        <View style={styles.wordListContainer}>
-          <Text style={styles.sectionTitle}>자주 사용한 욕설</Text>
-          {WORDS.map((item, index) => (
-            <LinearGradient
-              key={`${item.word}-${index}`}
-              colors={["#1A1A1A", "#1F1F1F"]}
-              style={styles.wordItem}
-            >
-              <View style={styles.rankBadge}>
-                <Text style={styles.rankText}>{index + 1}</Text>
-              </View>
-              <Text style={styles.wordText}>{item.word}</Text>
-              <View style={styles.wordCountBadge}>
-                <Text style={styles.wordCount}>{item.count}회</Text>
-              </View>
-            </LinearGradient>
-          ))}
-        </View>
-
-        {/* Instagram Share Button */}
-        <TouchableOpacity
-          style={styles.instagramButton}
-          onPress={shareToInstagram}
-          activeOpacity={0.8}
-        >
-          <LinearGradient
-            colors={["#FF9F40", "#FF7F11"]}
-            style={styles.instagramButtonGradient}
+          <TouchableOpacity
+            style={styles.instagramButton}
+            onPress={shareToInstagram}
+            activeOpacity={0.8}
           >
-            <Text style={styles.instagramButtonText}>
-              인스타그램 스토리 공유하기
-            </Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      </ScrollView>
+            <LinearGradient
+              colors={["#FF9F40", "#FF7F11"]}
+              style={styles.instagramButtonGradient}
+            >
+              <Text style={styles.instagramButtonText}>
+                인스타그램 스토리 공유하기
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </ScrollView>
+      </LinearGradient>
     </>
   );
 };
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   scroll: {
     flex: 1,
-    backgroundColor: "#0A0A0A",
   },
   contentContainer: {
     paddingHorizontal: 20,
@@ -333,84 +453,76 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   tabContainer: {
-    height: 56,
+    height: 48,
     flexDirection: "row",
-    backgroundColor: "#1A1A1A",
-    borderRadius: 16,
-    padding: 4,
+    backgroundColor: "rgba(118, 118, 128, 0.12)",
+    borderRadius: 10,
+    padding: 2,
     position: "relative",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 4,
   },
   activeTabHighlight: {
     position: "absolute",
-    top: 4,
-    bottom: 4,
-    left: 4,
-    borderRadius: 12,
-    backgroundColor: "#FF7F11",
+    top: 2,
+    bottom: 2,
+    left: 2,
+    borderRadius: 8,
+    backgroundColor: "rgba(118, 118, 128, 0.24)",
     zIndex: 0,
-    shadowColor: "#FF7F11",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 4,
   },
   tabButton: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
+    borderRadius: 8,
   },
   tabText: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
     fontWeight: "600",
-    color: "#888888",
+    color: "rgba(235, 235, 245, 0.6)",
   },
   activeTabText: {
     color: "#FFFFFF",
-    fontWeight: "700",
+    fontWeight: "600",
   },
-  chartContainer: {
-    backgroundColor: "#141414",
-    borderRadius: 20,
-    padding: 24,
+  chartSection: {
     marginBottom: 32,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
+    alignItems: "center",
   },
   chartTitle: {
     fontSize: 18,
     color: "#FFFFFF",
     fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
     fontWeight: "700",
-    marginBottom: 20,
+    marginBottom: 24,
     textAlign: "center",
   },
   chartWrapper: {
+    width: SCREEN_WIDTH - 40,
+    height: 270,
+  },
+  chartContainer: {
     position: "relative",
+    height: 240,
   },
   chartLabels: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingHorizontal: 40,
-    marginTop: 16,
+    paddingHorizontal: 20,
+    height: 30,
+    alignItems: "center",
+  },
+  chartLabelsInside: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 30,
   },
   chartLabel: {
     fontSize: 12,
@@ -419,7 +531,42 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     textAlign: "center",
   },
-  metricsWrapper: {
+  tooltip: {
+    position: "absolute",
+    backgroundColor: "rgba(42, 42, 46, 0.95)",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tooltipText: {
+    fontSize: 15,
+    color: "#FFFFFF",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 3,
+  },
+  tooltipLabel: {
+    fontSize: 10,
+    color: "#AAAAAA",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  metricsContainer: {
     marginBottom: 32,
   },
   wordListContainer: {
@@ -477,7 +624,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   wordCount: {
-    color: "#FF7F11",
+    color: "#FFFFFF",
     fontSize: 14,
     fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
     fontWeight: "600",
