@@ -310,7 +310,10 @@ const Home = () => {
         console.log('🎤 오디오 녹음만 시작...');
 
         const hasPermission = await checkPermissions();
-        if (!hasPermission) return false;
+        if (!hasPermission) {
+            addLog('마이크 권한이 거부되어 녹음을 시작할 수 없습니다', 'error');
+            return false;
+        }
 
         try {
             await Audio.setAudioModeAsync({
@@ -603,9 +606,33 @@ const Home = () => {
             console.log('🔄 3단계: 오디오 녹음 시작');
             // 3. 마지막으로 오디오 녹음 시작 (API 호출 제외)
             if (!isRecording) {
+                // 먼저 권한 확인
+                const hasPermission = await checkPermissions();
+                if (!hasPermission) {
+                    addLog('마이크 권한이 없어서 녹음을 시작할 수 없습니다', 'error');
+                    Alert.alert(
+                        '권한 필요', 
+                        '음성 감지를 위해 마이크 권한을 허용해주세요.\n설정 > 개인정보 보호 및 보안 > 마이크에서 권한을 설정할 수 있습니다.',
+                        [
+                            { text: '나중에', style: 'cancel', onPress: () => setIsOn(false) },
+                            { 
+                                text: '설정으로', 
+                                onPress: () => {
+                                    Linking.openSettings();
+                                    setIsOn(false);
+                                }
+                            }
+                        ]
+                    );
+                    // 권한이 없을 때는 API 종료 호출하지 않음 (아직 실제 녹음 시작 안했으므로)
+                    setIsOn(false);
+                    return;
+                }
+
                 const recordingSuccess = await startRecordingAudioOnly();
                 if (!recordingSuccess) {
-                    // 녹음 실패시 API 종료
+                    // 권한은 있지만 녹음 실패시에만 API 종료
+                    addLog('오디오 녹음 시작 실패 - API 종료 호출', 'error');
                     await stopRecordingAPI();
                     setIsOn(false);
                     return;
