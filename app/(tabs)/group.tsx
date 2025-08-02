@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Text, StyleSheet, View, TouchableOpacity, ScrollView, Modal, TextInput, Alert, Animated } from 'react-native';
+import {router} from "expo-router";
 
 const Group = () => {
 	const [selectedGroup, setSelectedGroup] = useState('책오렌탄');
@@ -15,8 +16,8 @@ const Group = () => {
 		'whwrkkxek',
 		'대충',
 		'욕',
-		'대충...',
-		'욕설......',
+		'대충',
+		'욕설',
 		'마인',
 		'축구',
 		'오열',
@@ -128,8 +129,8 @@ const Group = () => {
 						)}
 					</View>
 
-					<TouchableOpacity style={styles.addGroupButton}>
-						<Text style={styles.addGroupText}>+ 그룹 추가</Text>
+					<TouchableOpacity style={styles.addGroupButton} onPress={() => router.push("/create")}>
+						<Text style={styles.addGroupText} >+ 그룹 추가</Text>
 					</TouchableOpacity>
 				</View>
 
