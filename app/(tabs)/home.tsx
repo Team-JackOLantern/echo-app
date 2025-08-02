@@ -217,8 +217,28 @@ const Home = () => {
 
                 addLog(`WebSocket 연결 끊김: ${disconnectReason}`, 'error');
 
+                // 녹음 중이었다면 정리 (API 호출 없이)
                 if (isRecording) {
-                    stopRecording();
+                    console.log('🛑 WebSocket 연결 끊김으로 녹음 정리 시작');
+                    addLog('WebSocket 연결 끊김으로 녹음 상태 정리', 'warning');
+                    
+                    // 오디오 관련 리소스만 정리 (API 호출 없이)
+                    try {
+                        if (audioTransmissionRef.current) {
+                            clearInterval(audioTransmissionRef.current);
+                            audioTransmissionRef.current = null;
+                        }
+                        
+                        if (recordingRef.current) {
+                            recordingRef.current.stopAndUnloadAsync().catch(() => {});
+                            recordingRef.current = null;
+                        }
+                        
+                        setIsRecording(false);
+                        addLog('녹음 상태 정리 완료', 'info');
+                    } catch (error) {
+                        console.log('녹음 정리 중 오류:', error);
+                    }
                 }
 
                 // 자동 재연결 시도 (1000번 코드가 아닌 경우)
@@ -248,12 +268,21 @@ const Home = () => {
     }, [addLog, isRecording, isOn, isConnected]);
 
     const disconnectWebSocket = useCallback(() => {
+        console.log('🔌 WebSocket 수동 연결 해제 시작');
+        
+        // 먼저 녹음 중이면 정리 (API 호출 포함)
+        if (isRecording) {
+            console.log('🛑 연결 해제 전 녹음 중지');
+            stopRecording(); // 정상적인 녹음 중지 (API 호출 포함)
+        }
+        
         if (wsRef.current) {
-            wsRef.current.close();
+            wsRef.current.close(1000, '사용자 요청');
             wsRef.current = null;
         }
         setIsConnected(false);
-    }, []);
+        addLog('WebSocket 연결 수동 해제', 'info');
+    }, [isRecording, stopRecording, addLog]);
 
     const checkPermissions = useCallback(async () => {
         try {
@@ -438,8 +467,14 @@ const Home = () => {
             setIsRecording(false);
             addLog('🛑 녹음 중지');
 
-            // 서버에 녹음 중지 알림
-            await stopRecordingAPI();
+            // 서버에 녹음 중지 알림 (WebSocket이 연결된 상태에서만)
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+                console.log('🔄 WebSocket 연결 상태에서 녹음 중지 API 호출');
+                await stopRecordingAPI();
+            } else {
+                console.log('⚠️ WebSocket 연결 끊김 상태 - API 호출 생략');
+                addLog('WebSocket 연결 끊김으로 API 호출 생략', 'warning');
+            }
 
         } catch (error) {
             addLog('녹음 중지 오류: ' + (error as Error).message, 'error');
