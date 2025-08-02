@@ -10,6 +10,10 @@ export default function TapLayout() {
                 headerShown: false,
                 tabBarActiveTintColor: '#FF7F11',
                 tabBarInactiveTintColor: '#696969',
+                tabBarLabelStyle: {
+                  fontFamily: "PretendardMedium",
+                  fontSize: 10,
+                },
                 tabBarStyle: {
                     backgroundColor: '#1C1C1E',
                     height: 82,
