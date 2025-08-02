@@ -1,320 +1,509 @@
-import React, {useRef, useState, useEffect} from "react";
+import React, { useRef, useState, useCallback, useMemo } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    ScrollView,
-    Dimensions,
-    Animated,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Dimensions,
+  Animated,
+  Alert,
+  Share,
+  Platform,
 } from "react-native";
-import {LineChart} from "react-native-chart-kit";
-import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, {
+  Path,
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  Stop,
+  Circle,
+} from "react-native-svg";
+import { LinearGradient } from "expo-linear-gradient";
+import MetricsCard from "@/components/MetricsCard";
+import { StatusBar } from "expo-status-bar";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const TABS = ["오늘", "이번 주"] as const;
-type TabType = typeof TABS[number];
+type TabType = (typeof TABS)[number];
 
 const DATASETS: Record<TabType, number[]> = {
-    오늘: [5, 6, 4, 7, 5, 8, 6],
-    "이번 주": [20, 45, 28, 80, 99, 43, 50],
+  오늘: [5, 8, 12, 15, 18, 22, 16],
+  "이번 주": [20, 45, 28, 80, 99, 43, 50],
+};
+
+const LABELS: Record<TabType, string[]> = {
+  오늘: ["6시", "9시", "12시", "15시", "18시", "21시", "24시"],
+  "이번 주": ["월", "화", "수", "목", "금", "토", "일"],
 };
 
 const WORDS = [
-    {word: "시발", count: 24},
-    {word: "시발", count: 24},
-    {word: "시발", count: 24},
-    {word: "시발", count: 24},
-    {word: "시발", count: 24},
+  { word: "시발", count: 24 },
+  { word: "씨발", count: 18 },
+  { word: "개새끼", count: 15 },
+  { word: "병신", count: 12 },
+  { word: "미친", count: 8 },
 ];
 
+interface CustomChartProps {
+  data: number[];
+  labels: string[];
+  width: number;
+  height: number;
+}
+
+const CustomChart: React.FC<CustomChartProps> = ({
+  data,
+  labels,
+  width,
+  height,
+}) => {
+  const padding = 40;
+  const chartWidth = width - padding * 2;
+  const chartHeight = height - padding * 2;
+
+  const maxValue = Math.max(...data);
+  const minValue = Math.min(...data);
+  const valueRange = maxValue - minValue || 1;
+
+  const points = data.map((value, index) => {
+    const x = padding + (index * chartWidth) / (data.length - 1);
+    const y =
+      padding + chartHeight - ((value - minValue) / valueRange) * chartHeight;
+    return { x, y, value };
+  });
+
+  const pathData = points.reduce((path, point, index) => {
+    if (index === 0) {
+      return `M ${point.x} ${point.y}`;
+    }
+    const prevPoint = points[index - 1];
+    const cp1x = prevPoint.x + (point.x - prevPoint.x) / 3;
+    const cp1y = prevPoint.y;
+    const cp2x = point.x - (point.x - prevPoint.x) / 3;
+    const cp2y = point.y;
+    return `${path} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${point.x} ${point.y}`;
+  }, "");
+
+  const areaPath = `${pathData} L ${points[points.length - 1].x} ${
+    height - padding
+  } L ${padding} ${height - padding} Z`;
+
+  return (
+    <View style={styles.chartWrapper}>
+      <Svg width={width} height={height}>
+        <Defs>
+          <SvgLinearGradient
+            id="areaGradient"
+            x1="0%"
+            y1="0%"
+            x2="0%"
+            y2="100%"
+          >
+            <Stop offset="0%" stopColor="#FF7F11" stopOpacity="0.3" />
+            <Stop offset="100%" stopColor="#FF7F11" stopOpacity="0" />
+          </SvgLinearGradient>
+          <SvgLinearGradient
+            id="lineGradient"
+            x1="0%"
+            y1="0%"
+            x2="100%"
+            y2="0%"
+          >
+            <Stop offset="0%" stopColor="#FF9F40" />
+            <Stop offset="100%" stopColor="#FF7F11" />
+          </SvgLinearGradient>
+        </Defs>
+
+        <Path d={areaPath} fill="url(#areaGradient)" />
+
+        <Path
+          d={pathData}
+          stroke="url(#lineGradient)"
+          strokeWidth="3"
+          fill="transparent"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+
+        {points.map((point, index) => (
+          <Circle
+            key={index}
+            cx={point.x}
+            cy={point.y}
+            r="4"
+            fill="#FF7F11"
+            stroke="#FFFFFF"
+            strokeWidth="2"
+          />
+        ))}
+      </Svg>
+
+      <View style={styles.chartLabels}>
+        {labels.map((label, index) => (
+          <Text key={index} style={styles.chartLabel}>
+            {label}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+};
+
 const Statistics = () => {
-    const [selectedIndex, setSelectedIndex] = useState(0);
-    const translateX = useRef(new Animated.Value(0)).current;
-    const tabWidth = (SCREEN_WIDTH * 0.9 - 8) / 2;
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const translateX = useRef(new Animated.Value(0)).current;
+  const insets = useSafeAreaInsets();
 
-    const currentLabel = TABS[selectedIndex];
-    const currentData = DATASETS[currentLabel];
+  const tabWidth = useMemo(() => (SCREEN_WIDTH - 48 - 8) / 2, []);
 
-    useEffect(() => {
-        Animated.timing(translateX, {
-            toValue: selectedIndex * tabWidth,
-            duration: 200,
-            useNativeDriver: false,
-        }).start();
-    }, [selectedIndex]);
+  const currentLabel = TABS[selectedIndex];
+  const currentData = DATASETS[currentLabel];
+  const currentLabels = LABELS[currentLabel];
 
-    return (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.contentContainer}>
-            <View style={styles.profileSection}>
-                <View style={styles.profileImage}/>
-                <View style={styles.profileTextContainer}>
-                    <View style={styles.greetingContainer}>
-                        <Text style={styles.nameText}>이재환 </Text>
-                        <Text style={styles.nimText}>님 </Text>
-                        <Text style={styles.greetingText}>안녕하세요.</Text>
-                    </View>
-                    <Text style={styles.subText}>뭔가 쓰고싶은 말 써야할지...</Text>
-                </View>
-            </View>
+  const onTabPress = useCallback(
+    (index: number) => {
+      setSelectedIndex(index);
+      Animated.spring(translateX, {
+        toValue: index * tabWidth,
+        useNativeDriver: false,
+        tension: 300,
+        friction: 20,
+      }).start();
+    },
+    [translateX, tabWidth]
+  );
 
-            <View style={styles.tabWrapper}>
-                <View style={styles.tabContainer}>
-                    <Animated.View
-                        style={[
-                            styles.activeTabHighlight,
-                            {transform: [{translateX}]},
-                        ]}
-                    />
-                    {TABS.map((tab, i) => (
-                        <TouchableOpacity
-                            key={tab}
-                            onPress={() => setSelectedIndex(i)}
-                            style={styles.tabButton}
-                        >
-                            <Text
-                                style={[
-                                    styles.tabText,
-                                    selectedIndex === i && styles.activeTabText,
-                                ]}
-                            >
-                                {tab}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                    <View style={styles.divider1}/>
-                </View>
-            </View>
+  const shareToInstagram = useCallback(async () => {
+    try {
+      const message = `욕설 통계 리포트\n\n진동 횟수: 12회\n활성화 시간: 68시간 12분\n\nTOP 3 욕설:\n${WORDS.slice(
+        0,
+        3
+      )
+        .map((item, index) => `${index + 1}. ${item.word} (${item.count}회)`)
+        .join("\n")}\n\n#욕설통계 #자기계발`;
 
-            <LineChart
-                data={{
-                    labels: ["", "", "", "", "", "", ""],
-                    datasets: [{data: currentData}],
-                }}
-                width={SCREEN_WIDTH - 40}
-                height={200}
-                withDots={false}
-                withInnerLines={false}
-                withOuterLines={false}
-                formatYLabel={(label) => `${parseInt(label)} 회`}
-                chartConfig={{
-                    backgroundGradientFrom: "#121212",
-                    backgroundGradientTo: "#121212",
-                    color: () => `#FF7F11`,
-                    fillShadowGradientFrom: "#FF7F11",
-                    fillShadowGradientTo: "#121212",
-                    fillShadowGradientFromOpacity: 0.7,
-                }}
-                style={styles.chart}
+      await Share.share({
+        message: message,
+        title: "욕설 통계 공유",
+      });
+    } catch {
+      Alert.alert("공유 실패", "공유 중 오류가 발생했습니다.");
+    }
+  }, []);
+
+  return (
+    <>
+      <StatusBar style="light" />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.contentContainer,
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 100 },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header Section */}
+        <View style={styles.headerContainer}>
+          <Text style={styles.headerName}>이재환 님</Text>
+          <Text style={styles.headerSubtitle}>
+            지난 기록을 한눈에 정리했어요.
+          </Text>
+        </View>
+
+        {/* Tab Section */}
+        <View style={styles.tabWrapper}>
+          <View style={styles.tabContainer}>
+            <Animated.View
+              style={[
+                styles.activeTabHighlight,
+                {
+                  transform: [{ translateX }],
+                  width: tabWidth,
+                },
+              ]}
             />
-
-            <View style={styles.bottomSection}>
-                <LinearGradient
-                    colors={['#121212', '#212121']}
-                    start={{x: 0.5, y: 0}}
-                    end={{x: 0.5, y: 1}}
-                    style={styles.metricsContainer}
+            {TABS.map((tab, i) => (
+              <TouchableOpacity
+                key={tab}
+                onPress={() => onTabPress(i)}
+                style={styles.tabButton}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.tabText,
+                    selectedIndex === i && styles.activeTabText,
+                  ]}
                 >
-                    <View style={styles.metric}>
-                        <Text style={styles.metricLabel}>활성화 시간</Text>
-                        <Text style={styles.metricValue}>68:12</Text>
-                    </View>
-                    <View style={styles.metricDivider}/>
-                    <View style={styles.metric}>
-                        <Text style={styles.metricLabel}>진동 횟수</Text>
-                        <Text style={styles.metricCount}>12</Text>
-                        <Text style={styles.metricUnit}>회</Text>
-                    </View>
-                </LinearGradient>
+                  {tab}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
 
-                <View style={styles.wordList}>
-                    {WORDS.map((item, index) => (
-                        <View key={index} style={styles.wordItem}>
-                            <Text style={styles.wordText}>{item.word}</Text>
-                            <Text style={styles.wordCount}>{item.count}회</Text>
-                        </View>
-                    ))}
-                </View>
+        {/* Chart Section */}
+        <View style={styles.chartContainer}>
+          <Text style={styles.chartTitle}>욕설 사용 빈도</Text>
+          <CustomChart
+            data={currentData}
+            labels={currentLabels}
+            width={SCREEN_WIDTH - 64}
+            height={200}
+          />
+        </View>
 
-                <TouchableOpacity style={styles.instagramButton}>
-                    <Text style={styles.instagramButtonText}>인스타그램 스토리 공유하기</Text>
-                </TouchableOpacity>
-            </View>
-        </ScrollView>
-    );
+        {/* Metrics Section */}
+        <View style={styles.metricsWrapper}>
+          <MetricsCard
+            activeTime="68:12"
+            vibrationCount={12}
+            activeTimePercent={68.2}
+            compact={false}
+          />
+        </View>
+
+        {/* Word List Section */}
+        <View style={styles.wordListContainer}>
+          <Text style={styles.sectionTitle}>자주 사용한 욕설</Text>
+          {WORDS.map((item, index) => (
+            <LinearGradient
+              key={`${item.word}-${index}`}
+              colors={["#1A1A1A", "#1F1F1F"]}
+              style={styles.wordItem}
+            >
+              <View style={styles.rankBadge}>
+                <Text style={styles.rankText}>{index + 1}</Text>
+              </View>
+              <Text style={styles.wordText}>{item.word}</Text>
+              <View style={styles.wordCountBadge}>
+                <Text style={styles.wordCount}>{item.count}회</Text>
+              </View>
+            </LinearGradient>
+          ))}
+        </View>
+
+        {/* Instagram Share Button */}
+        <TouchableOpacity
+          style={styles.instagramButton}
+          onPress={shareToInstagram}
+          activeOpacity={0.8}
+        >
+          <LinearGradient
+            colors={["#FF9F40", "#FF7F11"]}
+            style={styles.instagramButtonGradient}
+          >
+            <Text style={styles.instagramButtonText}>
+              인스타그램 스토리 공유하기
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </ScrollView>
+    </>
+  );
 };
 
 const styles = StyleSheet.create({
-    scroll: {
-        flex: 1,
-        backgroundColor: "#121212",
+  scroll: {
+    flex: 1,
+    backgroundColor: "#0A0A0A",
+  },
+  contentContainer: {
+    paddingHorizontal: 20,
+  },
+  headerContainer: {
+    marginBottom: 32,
+  },
+  headerName: {
+    fontSize: 24,
+    color: "#FF7F11",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: "#FFFFFF",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "400",
+    opacity: 0.8,
+  },
+  tabWrapper: {
+    marginBottom: 32,
+  },
+  tabContainer: {
+    height: 56,
+    flexDirection: "row",
+    backgroundColor: "#1A1A1A",
+    borderRadius: 16,
+    padding: 4,
+    position: "relative",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
     },
-    contentContainer: {
-        alignItems: "center",
-        paddingBottom: 40,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  activeTabHighlight: {
+    position: "absolute",
+    top: 4,
+    bottom: 4,
+    left: 4,
+    borderRadius: 12,
+    backgroundColor: "#FF7F11",
+    zIndex: 0,
+    shadowColor: "#FF7F11",
+    shadowOffset: {
+      width: 0,
+      height: 2,
     },
-    profileSection: {
-        width: SCREEN_WIDTH - 20,
-        flexDirection: "row",
-        paddingHorizontal: 18,
-        gap: 24,
-        marginTop: 100,
-        marginBottom: 40,
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  tabButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  tabText: {
+    fontSize: 16,
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "600",
+    color: "#888888",
+  },
+  activeTabText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+  chartContainer: {
+    backgroundColor: "#141414",
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 32,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
     },
-    profileImage: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        backgroundColor: "#D9D9D9",
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  chartTitle: {
+    fontSize: 18,
+    color: "#FFFFFF",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "700",
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  chartWrapper: {
+    position: "relative",
+  },
+  chartLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 40,
+    marginTop: 16,
+  },
+  chartLabel: {
+    fontSize: 12,
+    color: "#888888",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  metricsWrapper: {
+    marginBottom: 32,
+  },
+  wordListContainer: {
+    marginBottom: 32,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    color: "#FFFFFF",
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "700",
+    marginBottom: 16,
+  },
+  wordItem: {
+    height: 64,
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
     },
-    profileTextContainer: {
-        gap: 5,
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  rankBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FF7F11",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 16,
+  },
+  rankText: {
+    fontSize: 14,
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  wordText: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "600",
+  },
+  wordCountBadge: {
+    backgroundColor: "#333333",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  wordCount: {
+    color: "#FF7F11",
+    fontSize: 14,
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "600",
+  },
+  instagramButton: {
+    marginBottom: 0,
+  },
+  instagramButtonGradient: {
+    paddingVertical: 20,
+    borderRadius: 20,
+    alignItems: "center",
+    shadowColor: "#FF7F11",
+    shadowOffset: {
+      width: 0,
+      height: 6,
     },
-    greetingContainer: {
-        flexDirection: "row",
-        alignItems: "baseline",
-    },
-    nameText: {
-        fontSize: 20,
-        fontFamily: "PretendardSemiBold",
-        color: "#FF7F11",
-    },
-    nimText: {
-        fontSize: 18,
-        color: "#FF7F11",
-        fontFamily: "PretendardMedium",
-    },
-    greetingText: {
-        fontSize: 18,
-        color: "#EAE3EE",
-        fontFamily: "PretendardMedium",
-    },
-    subText: {
-        fontSize: 16,
-        color: "#878787",
-        fontFamily: "PretendardRegular",
-    },
-    tabWrapper: {
-        width: SCREEN_WIDTH * 0.9,
-        alignItems: "center",
-        marginBottom: 24,
-    },
-    tabContainer: {
-        width: "100%",
-        height: 40,
-        flexDirection: "row",
-        backgroundColor: "#333",
-        borderRadius: 12,
-        padding: 4,
-        position: "relative",
-    },
-    activeTabHighlight: {
-        position: "absolute",
-        top: 4,
-        bottom: 4,
-        left: 0,
-        width: (SCREEN_WIDTH * 0.9 - 8) / 2,
-        borderRadius: 8,
-        backgroundColor: "#636366",
-        zIndex: 0,
-    },
-    tabButton: {
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1,
-    },
-    tabText: {
-        fontSize: 16,
-        fontWeight: "500",
-        color: "#878787",
-    },
-    activeTabText: {
-        color: "#FFFFFF",
-    },
-    divider1: {
-        position: "absolute",
-        left: (SCREEN_WIDTH * 0.9 - 8) / 2,
-        top: 8,
-        bottom: 8,
-        width: 1,
-        backgroundColor: "#878787",
-        zIndex: 2,
-    },
-    chart: {
-        marginBottom: 32,
-    },
-    bottomSection: {
-        width: SCREEN_WIDTH,
-        backgroundColor: "#212121",
-        paddingVertical: 24,
-        paddingHorizontal: 24,
-        gap: 16,
-    },
-    metricsContainer: {
-        flexDirection: "row",
-        justifyContent: "space-around",
-        alignItems: "center",
-    },
-    metric: {
-        alignItems: "center",
-    },
-    metricLabel: {
-        fontSize: 14,
-        color: "#EAE3EE",
-    },
-    metricValue: {
-        fontSize: 16,
-        color: "#EAE3EE",
-        marginTop: 8,
-    },
-    metricCount: {
-        fontSize: 36,
-        color: "#FF7F11",
-        fontFamily: "PretendardSemiBold",
-    },
-    metricUnit: {
-        fontSize: 14,
-        color: "#EAE3EE",
-    },
-    metricDivider: {
-        height: 60,
-        width: 1,
-        backgroundColor: "#878787",
-    },
-    wordList: {
-        gap: 8,
-    },
-    wordItem: {
-        backgroundColor: "#121212",
-        height: 40,
-        borderRadius: 8,
-        paddingHorizontal: 12,
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-    },
-    wordText: {
-        color: "#EAE3EE",
-        fontSize: 14,
-        fontFamily: "PretendardSemiBold",
-    },
-    wordCount: {
-        color: "#EAE3EE",
-        fontSize: 12,
-        fontFamily: "PretendardMedium",
-    },
-    instagramButton: {
-        backgroundColor: "#FF7F11",
-        paddingVertical: 16,
-        borderRadius: 12,
-        alignItems: "center",
-    },
-    instagramButtonText: {
-        fontSize: 18,
-        fontFamily: "PretendardSemiBold",
-        color: "#FFFFFF",
-    },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  instagramButtonText: {
+    fontSize: 16,
+    fontFamily: Platform.OS === "ios" ? "System" : "Roboto",
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
 });
 
 export default Statistics;

@@ -1,6 +1,9 @@
 import { View, Pressable, Animated, Easing, StyleSheet } from "react-native";
 import { useRef, useState, useCallback, useMemo } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import OffIcon from "@/assets/icons/off";
+import MetricsCard from "@/components/MetricsCard";
+import { StatusBar } from "expo-status-bar";
 
 interface Ripple {
   id: number;
@@ -11,16 +14,15 @@ interface Ripple {
 const Home = () => {
   const [isOn, setIsOn] = useState(false);
   const [ripples, setRipples] = useState<Ripple[]>([]);
+  const insets = useSafeAreaInsets();
 
-  // Animated Values - 초기화를 한 번만 수행
   const buttonScale = useRef(new Animated.Value(1)).current;
   const shadowAnim = useRef(new Animated.Value(1)).current;
   const outerColorAnim = useRef(new Animated.Value(0)).current;
   const middleColorAnim = useRef(new Animated.Value(0)).current;
 
-  // Ripple 생성 함수 최적화
   const createRipple = useCallback(() => {
-    const id = Date.now() + Math.random(); // 고유성 보장
+    const id = Date.now() + Math.random();
     const scale = new Animated.Value(0);
     const opacity = new Animated.Value(0.4);
 
@@ -46,7 +48,6 @@ const Home = () => {
     });
   }, []);
 
-  // Press 핸들러들 최적화
   const handlePressIn = useCallback(() => {
     Animated.parallel([
       Animated.spring(buttonScale, {
@@ -104,7 +105,6 @@ const Home = () => {
     ]).start();
   }, [isOn, createRipple, outerColorAnim, middleColorAnim]);
 
-  // Interpolated values를 useMemo로 최적화
   const interpolatedValues = useMemo(
     () => ({
       outerBg: outerColorAnim.interpolate({
@@ -132,75 +132,96 @@ const Home = () => {
   );
 
   return (
-    <View style={styles.container}>
-      <Pressable
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        onPress={handlePress}
-        accessible={true}
-        accessibilityLabel={`Power button, currently ${isOn ? "on" : "off"}`}
-        accessibilityRole="button"
-      >
-        <Animated.View
-          style={[
-            styles.outerCircle,
-            {
-              backgroundColor: interpolatedValues.outerBg,
-              transform: [{ scale: buttonScale }],
-              shadowOpacity: interpolatedValues.shadowOpacity,
-              shadowRadius: interpolatedValues.shadowRadius,
-              shadowOffset: {
-                width: 0,
-                height: interpolatedValues.shadowOffset,
-              },
-            },
-          ]}
-        >
-          <Animated.View
-            style={[
-              styles.middleCircle,
-              { backgroundColor: interpolatedValues.middleBg },
-            ]}
+    <>
+      <StatusBar style="light" />
+      <View style={styles.container}>
+        <View style={styles.buttonSection}>
+          <Pressable
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            onPress={handlePress}
+            accessible={true}
+            accessibilityLabel={`Power button, currently ${
+              isOn ? "on" : "off"
+            }`}
+            accessibilityRole="button"
           >
-            {ripples.map((ripple) => (
-              <Animated.View
-                key={ripple.id}
-                style={[
-                  styles.ripple,
-                  {
-                    backgroundColor: isOn
-                      ? "rgba(255, 255, 255, 0.2)"
-                      : "rgba(255, 127, 17, 0.15)",
-                    opacity: ripple.opacity,
-                    transform: [
-                      {
-                        scale: ripple.scale.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.3, 1.4],
-                        }),
-                      },
-                    ],
+            <Animated.View
+              style={[
+                styles.outerCircle,
+                {
+                  backgroundColor: interpolatedValues.outerBg,
+                  transform: [{ scale: buttonScale }],
+                  shadowOpacity: interpolatedValues.shadowOpacity,
+                  shadowRadius: interpolatedValues.shadowRadius,
+                  shadowOffset: {
+                    width: 0,
+                    height: interpolatedValues.shadowOffset,
                   },
+                },
+              ]}
+            >
+              <Animated.View
+                style={[
+                  styles.middleCircle,
+                  { backgroundColor: interpolatedValues.middleBg },
                 ]}
-              />
-            ))}
+              >
+                {ripples.map((ripple) => (
+                  <Animated.View
+                    key={ripple.id}
+                    style={[
+                      styles.ripple,
+                      {
+                        backgroundColor: isOn
+                          ? "rgba(255, 255, 255, 0.2)"
+                          : "rgba(255, 127, 17, 0.15)",
+                        opacity: ripple.opacity,
+                        transform: [
+                          {
+                            scale: ripple.scale.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0.3, 1.4],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  />
+                ))}
 
-            <View style={styles.centerButton}>
-              <View style={styles.centerButtonBackdrop} />
-              <View style={styles.centerButtonHighlight} />
-              <OffIcon fill={isOn ? "#FF7F11" : "#696969"} />
-            </View>
-          </Animated.View>
-        </Animated.View>
-      </Pressable>
-    </View>
+                <View style={styles.centerButton}>
+                  <View style={styles.centerButtonBackdrop} />
+                  <View style={styles.centerButtonHighlight} />
+                  <OffIcon fill={isOn ? "#FF7F11" : "#696969"} />
+                </View>
+              </Animated.View>
+            </Animated.View>
+          </Pressable>
+        </View>
+
+        <View
+          style={[styles.metricsWrapper, { paddingBottom: insets.bottom + 20 }]}
+        >
+          <MetricsCard
+            activeTime="68:12"
+            vibrationCount={12}
+            activeTimePercent={68.2}
+            compact={false}
+          />
+        </View>
+      </View>
+    </>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#121212",
+    backgroundColor: "#0A0A0A",
+  },
+  buttonSection: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -215,7 +236,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 16,
     elevation: 12,
-    // 깔끔한 글래스모피즘
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.2)",
@@ -264,6 +284,9 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
     borderRadius: 87.5,
+  },
+  metricsWrapper: {
+    paddingHorizontal: 20,
   },
 });
 
