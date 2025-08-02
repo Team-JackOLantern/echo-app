@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import './ProfanityDetector.css';
 
 const ProfanityDetector = () => {
@@ -12,10 +12,10 @@ const ProfanityDetector = () => {
 
   // Refs
   const wsRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const streamRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
 
   // 로그 추가 함수
   const addLog = useCallback((message, type = 'info') => {
@@ -36,7 +36,14 @@ const ProfanityDetector = () => {
       return;
     }
 
-    const wsUrl = `ws://localhost:8000/ws?user_id=${userId}`;
+    // 기존 재연결 타이머 정리
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    // ngrok URL 사용 (실제 서버 URL로 변경)
+    const wsUrl = `wss://baff2434741b.ngrok-free.app/ws?user_id=${userId}`;
     addLog(`WebSocket 연결 시도: ${wsUrl}`);
     setConnectionStatus('connecting');
 
@@ -58,11 +65,21 @@ const ProfanityDetector = () => {
         setConnectionStatus('connected');
         addLog('WebSocket 연결 성공', 'success');
         
-        // 연결 확인 ping 전송
+        // 연결 확인을 위한 keep-alive 메시지 전송
         setTimeout(() => {
           if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send('ping');
-            addLog('Ping 메시지 전송');
+            try {
+              // JSON 형태로 keep-alive 메시지 전송
+              const keepAliveMessage = JSON.stringify({
+                type: 'keep_alive',
+                timestamp: Date.now(),
+                user_id: userId
+              });
+              wsRef.current.send(keepAliveMessage);
+              addLog('Keep-alive 메시지 전송');
+            } catch (error) {
+              addLog(`Keep-alive 전송 오류: ${error.message}`, 'error');
+            }
           }
         }, 1000);
       };
@@ -112,31 +129,53 @@ const ProfanityDetector = () => {
         setIsConnected(false);
         setConnectionStatus('disconnected');
         
+        // 녹음 중이었다면 중지
+        if (isRecording) {
+          addLog('WebSocket 연결 끊김으로 녹음 중지', 'warning');
+          stopRecording();
+        }
+        
         let reason = '알 수 없는 이유';
+        let shouldReconnect = false;
+        
         switch (event.code) {
           case 1000:
             reason = '정상 종료';
+            // 서버에서 정상적으로 연결을 종료한 경우
+            addLog('서버에서 연결을 종료했습니다. 서버 상태를 확인하세요.', 'warning');
             break;
           case 1001:
             reason = '서버 종료';
+            shouldReconnect = true;
+            break;
+          case 1002:
+            reason = '프로토콜 오류';
+            shouldReconnect = true;
             break;
           case 1006:
             reason = '비정상 연결 종료';
+            shouldReconnect = true;
+            break;
+          case 1011:
+            reason = '서버 오류';
+            shouldReconnect = true;
             break;
           default:
             reason = `코드 ${event.code}: ${event.reason || '알 수 없는 오류'}`;
+            shouldReconnect = event.code !== 1000;
         }
         
         addLog(`WebSocket 연결 종료: ${reason}`, 'error');
         
-        // 자동 재연결 (정상 종료가 아닌 경우)
-        if (event.code !== 1000 && connectionStatus !== 'disconnected') {
-          addLog('3초 후 자동 재연결 시도...', 'info');
-          setTimeout(() => {
-            if (!isConnected) {
+        // 자동 재연결 로직 개선
+        if (shouldReconnect && connectionStatus === 'connected') {
+          addLog('5초 후 자동 재연결 시도...', 'info');
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (!isConnected && connectionStatus !== 'connecting') {
+              addLog('자동 재연결 시도 중...', 'info');
               connectWebSocket();
             }
-          }, 3000);
+          }, 5000);
         }
       };
 
@@ -154,15 +193,32 @@ const ProfanityDetector = () => {
 
   // WebSocket 연결 해제
   const disconnectWebSocket = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.send('close');
-      wsRef.current.close(1000, '사용자 요청');
-      wsRef.current = null;
+    // 재연결 타이머 정리
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        // 종료 메시지 전송
+        const closeMessage = JSON.stringify({
+          type: 'close',
+          user_id: userId,
+          timestamp: Date.now()
+        });
+        wsRef.current.send(closeMessage);
+      } catch (error) {
+        addLog(`종료 메시지 전송 오류: ${error.message}`, 'warning');
+      }
+      wsRef.current.close(1000, '사용자 요청');
+    }
+    
+    wsRef.current = null;
     setIsConnected(false);
     setConnectionStatus('disconnected');
     addLog('WebSocket 연결 해제');
-  }, [addLog]);
+  }, [addLog, userId]);
 
   // 마이크 권한 요청
   const requestMicrophonePermission = useCallback(async () => {
@@ -206,7 +262,8 @@ const ProfanityDetector = () => {
       streamRef.current = stream;
 
       // AudioContext 설정 (16kHz, 16bit PCM)
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      audioContextRef.current = new AudioContextClass({
         sampleRate: 16000
       });
 
@@ -223,15 +280,29 @@ const ProfanityDetector = () => {
         const inputBuffer = event.inputBuffer;
         const inputData = inputBuffer.getChannelData(0);
         
-        // Float32Array를 16bit PCM으로 변환
-        const pcmBuffer = new Int16Array(inputData.length);
+        // 음성 활동 감지 (간단한 볼륨 체크)
+        let sum = 0;
         for (let i = 0; i < inputData.length; i++) {
-          const sample = Math.max(-1, Math.min(1, inputData[i]));
-          pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+          sum += Math.abs(inputData[i]);
         }
+        const avgVolume = sum / inputData.length;
         
-        // 바이너리 데이터로 전송
-        wsRef.current.send(pcmBuffer.buffer);
+        // 볼륨이 임계값 이상일 때만 전송 (노이즈 필터링)
+        if (avgVolume > 0.01) {
+          try {
+            // Float32Array를 16bit PCM으로 변환
+            const pcmBuffer = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              const sample = Math.max(-1, Math.min(1, inputData[i]));
+              pcmBuffer[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            }
+            
+            // 바이너리 데이터로 전송
+            wsRef.current.send(pcmBuffer.buffer);
+          } catch (error) {
+            addLog(`오디오 전송 오류: ${error.message}`, 'error');
+          }
+        }
       };
 
       source.connect(processorRef.current);
@@ -280,10 +351,21 @@ const ProfanityDetector = () => {
   // 컴포넌트 언마운트 시 정리
   useEffect(() => {
     return () => {
-      stopRecording();
+      // 녹음 중지
+      if (isRecording) {
+        stopRecording();
+      }
+      
+      // 재연결 타이머 정리
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      
+      // WebSocket 연결 해제
       disconnectWebSocket();
     };
-  }, [stopRecording, disconnectWebSocket]);
+  }, [isRecording, stopRecording, disconnectWebSocket]);
 
   // 연결 상태에 따른 스타일 클래스
   const getStatusClass = () => {
