@@ -1,8 +1,15 @@
-import {Text} from "react-native";
+import {Text, View} from "react-native";
 
 const Statistics = () => {
     return (
-        <Text>Statistics</Text>
+        <View
+            style={{
+                flex: 1,
+                backgroundColor: "#121212",
+            }}
+        >
+            <Text>Statistics</Text>
+        </View>
     )
 }
 
